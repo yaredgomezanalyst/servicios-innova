@@ -25,6 +25,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <style>
   :root{
@@ -262,6 +263,56 @@ const mesAnio = (iso) => {
 const uid = () => Math.random().toString(36).slice(2,10);
 const fmtEur = (n) => (Number(n)||0).toLocaleString("es-ES",{style:"currency",currency:"EUR",minimumFractionDigits:0,maximumFractionDigits:2});
 
+/* ───────────────── Exportar a Excel ───────────────── */
+function exportarExcel(data){
+  if(!window.XLSX){ alert("El componente de Excel aún se está cargando. Espera un segundo y vuelve a intentarlo."); return; }
+  const nombreU = id => (data.usuarias.find(u=>u.id===id)||{}).nombre || "—";
+  const sn = b => b ? "Sí" : "No";
+
+  const hUsuarias = data.usuarias.map(u=>({
+    "Usuaria": u.nombre,
+    "Nº de cuenta": u.numero_cuenta||"",
+    "Discapacidad reconocida": sn(u.discapacidad),
+    "Inserción laboral (trabajando)": sn(u.trabajando),
+    "Dónde / detalles": u.trabajo_donde||"",
+    "Observaciones": u.observaciones||"",
+  }));
+  const hHoras = data.sesiones.map(s=>({
+    "Usuaria": nombreU(s.usuaria_id),
+    "Servicio": svcById(s.tipo).label,
+    "Horas": Number(s.horas||0),
+    "€/hora": Number(s.tarifa||0),
+    "Importe (€)": Number(s.horas||0)*Number(s.tarifa||0),
+    "Fecha": fmtFecha(s.fecha),
+    "Facturado": sn(s.facturado),
+    "Fecha facturación": s.facturado?fmtFecha(s.fecha_facturacion):"",
+    "Trabajadora": traById(s.trabajadora_id).nombre,
+  }));
+  const hBecas = data.ayudas.map(a=>({
+    "Usuaria": nombreU(a.usuaria_id),
+    "Beca": becaById(a.tipo).label,
+    "Concepto": a.concepto||"",
+    "Importe (€)": Number(a.importe||0),
+    "Fecha": fmtFecha(a.fecha),
+  }));
+  const hCitas = data.citas.map(c=>({
+    "Trabajadora": traById(c.trabajadora_id).nombre,
+    "Usuaria": c.usuaria,
+    "Fecha": fmtFecha(c.fecha),
+    "Hora": c.hora_inicio||"",
+    "Servicio": svcById(c.servicio).label,
+    "Nota": c.nota||"",
+  }));
+
+  const wb = XLSX.utils.book_new();
+  const add = (rows, nombre, vacio) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length?rows:[vacio]), nombre);
+  add(hUsuarias, "Usuarias", {"Usuaria":""});
+  add(hHoras, "Horas y facturación", {"Usuaria":""});
+  add(hBecas, "Becas", {"Usuaria":""});
+  add(hCitas, "Citas", {"Trabajadora":""});
+  XLSX.writeFile(wb, `servicios-vg_${hoyStr()}.xlsx`);
+}
+
 /* ───────────────── Datos demo ───────────────── */
 function datosDemo(){
   // Sin datos de ejemplo. Al conectar Supabase, todo se carga desde la base de datos.
@@ -376,6 +427,14 @@ function Main({ session }){
     if(!SUPA_OK){ setData(d=>({...d, ayudas:d.ayudas.filter(x=>x.id!==id)})); return; }
     await supa.from("ayudas").delete().eq("id",id); cargar();
   }
+  async function updAyuda(id,patch){
+    if(!SUPA_OK){ setData(d=>({...d, ayudas:d.ayudas.map(x=>x.id===id?{...x,...patch}:x)})); return; }
+    await supa.from("ayudas").update(patch).eq("id",id); cargar();
+  }
+  async function delUsuaria(id){
+    if(!SUPA_OK){ setData(d=>({...d, usuarias:d.usuarias.filter(x=>x.id!==id), sesiones:d.sesiones.filter(x=>x.usuaria_id!==id), ayudas:d.ayudas.filter(x=>x.usuaria_id!==id)})); return; }
+    await supa.from("usuarias").delete().eq("id",id); cargar();
+  }
 
   return (
     <div>
@@ -388,9 +447,12 @@ function Main({ session }){
           </div>
           <span className={"mode-badge "+(SUPA_OK?"mode-real":"mode-demo")}>{SUPA_OK?"Conectado":"Modo demo"}</span>
         </div>
-        {SUPA_OK
-          ? <button className="btn btn-sm" onClick={()=>supa.auth.signOut()}>Salir</button>
-          : <span className="tiny muted">Datos de ejemplo · nada se guarda</span>}
+        <div className="row" style={{gap:10}}>
+          <button className="btn btn-sm" onClick={()=>exportarExcel(data)}>⤓ Exportar a Excel</button>
+          {SUPA_OK
+            ? <button className="btn btn-sm" onClick={()=>supa.auth.signOut()}>Salir</button>
+            : <span className="tiny muted">Modo demo · nada se guarda</span>}
+        </div>
       </div></div>
 
       <div className="tabs"><div className="wrap" style={{display:"flex"}}>
@@ -406,7 +468,7 @@ function Main({ session }){
             ? <Resumen data={data} />
             : tab==="calendario"
             ? <Calendario citas={data.citas} onAdd={addCita} onDel={delCita} />
-            : <Servicios data={data} addUsuaria={addUsuaria} addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} />
+            : <Servicios data={data} addUsuaria={addUsuaria} addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda} delUsuaria={delUsuaria} />
         }
       </div>
     </div>
@@ -549,11 +611,16 @@ function ModalCita({ fecha, onClose, onSave }){
 }
 
 /* ════════════════════════ SERVICIOS ════════════════════════ */
-function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda }){
+function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda, updAyuda, delUsuaria }){
   const [sel,setSel]=useState(data.usuarias[0]?.id||null);
   const [nuevaU,setNuevaU]=useState("");
   const [orden,setOrden]=useState("nombre"); // nombre | orientacion | formacion | acogida
   const usuaria=data.usuarias.find(u=>u.id===sel);
+
+  async function eliminarUsuaria(id){
+    await delUsuaria(id);
+    setSel(null);
+  }
 
   // horas por servicio de cada usuaria (para ordenar y mostrar)
   const horasDe = (uid, tipo) => data.sesiones
@@ -612,21 +679,30 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuar
               sesiones={data.sesiones.filter(s=>s.usuaria_id===usuaria.id)}
               ayudas={data.ayudas.filter(a=>a.usuaria_id===usuaria.id)}
               addSesion={addSesion} updSesion={updSesion} delSesion={delSesion}
-              updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} />
+              updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda}
+              onDeleteUsuaria={eliminarUsuaria} />
         }
       </div>
     </div>
   );
 }
 
-function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda }){
-  const [modal,setModal]=useState(null); // sesión {tipo}
-  const [modalAyuda,setModalAyuda]=useState(null); // ayuda {tipo}
+function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda, updAyuda, onDeleteUsuaria }){
+  const [modal,setModal]=useState(null); // sesión {tipo, sesion?}
+  const [modalAyuda,setModalAyuda]=useState(null); // ayuda {tipo, ayuda?}
   return (
     <div>
       <div className="card card-pad" style={{marginBottom:18}}>
-        <h2 style={{fontSize:21}}>{usuaria.nombre}</h2>
-        <p className="small muted" style={{marginTop:2}}>Ficha, horas por servicio y becas.</p>
+        <div className="spread">
+          <div>
+            <h2 style={{fontSize:21}}>{usuaria.nombre}</h2>
+            <p className="small muted" style={{marginTop:2}}>Ficha, horas por servicio y becas.</p>
+          </div>
+          <button className="btn btn-sm btn-ghost btn-danger"
+            onClick={()=>{ if(confirm(`¿Eliminar a "${usuaria.nombre}" y todos sus datos (horas, becas)? Esta acción no se puede deshacer.`)) onDeleteUsuaria(usuaria.id); }}>
+            Eliminar usuaria
+          </button>
+        </div>
       </div>
 
       <Ficha key={usuaria.id} usuaria={usuaria} updUsuaria={updUsuaria} />
@@ -683,7 +759,8 @@ function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSe
                           {!s.facturado
                             ? <button className="btn btn-sm" onClick={()=>{const fac=prompt("Fecha de facturación (DD/MM/AAAA):",fmtFecha(hoyStr())); if(fac){const p=fac.split("/"); if(p.length===3) updSesion(s.id,{facturado:true,fecha_facturacion:`${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}`});}}}>Facturar</button>
                             : <button className="btn btn-sm btn-ghost" onClick={()=>updSesion(s.id,{facturado:false,fecha_facturacion:null})}>Desmarcar</button>}
-                          <button className="btn btn-sm btn-ghost btn-danger" onClick={()=>{if(confirm("¿Eliminar esta sesión?")) delSesion(s.id);}}>✕</button>
+                          <button className="btn btn-sm btn-ghost" title="Editar" onClick={()=>setModal({tipo:svc.id, sesion:s})}>✎</button>
+                          <button className="btn btn-sm btn-ghost btn-danger" title="Eliminar" onClick={()=>{if(confirm("¿Eliminar esta sesión?")) delSesion(s.id);}}>✕</button>
                         </td>
                       </tr>
                     );
@@ -714,8 +791,9 @@ function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSe
                       <td>{fmtFecha(x.fecha)}</td>
                       <td>{x.concepto||"—"}</td>
                       <td><b>{fmtEur(x.importe)}</b></td>
-                      <td style={{textAlign:"right"}}>
-                        <button className="btn btn-sm btn-ghost btn-danger" onClick={()=>{if(confirm("¿Eliminar este registro?")) delAyuda(x.id);}}>✕</button>
+                      <td style={{textAlign:"right",whiteSpace:"nowrap"}}>
+                        <button className="btn btn-sm btn-ghost" title="Editar" onClick={()=>setModalAyuda({tipo:beca.id, ayuda:x})}>✎</button>
+                        <button className="btn btn-sm btn-ghost btn-danger" title="Eliminar" onClick={()=>{if(confirm("¿Eliminar este registro?")) delAyuda(x.id);}}>✕</button>
                       </td>
                     </tr>
                   ))}
@@ -725,8 +803,10 @@ function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSe
         );
       })}
 
-      {modal && <ModalSesion tipo={modal.tipo} usuaria_id={usuaria.id} onClose={()=>setModal(null)} onSave={(s)=>{addSesion(s); setModal(null);}} />}
-      {modalAyuda && <ModalAyuda beca={becaById(modalAyuda.tipo)} usuaria_id={usuaria.id} onClose={()=>setModalAyuda(null)} onSave={(a)=>{addAyuda(a); setModalAyuda(null);}} />}
+      {modal && <ModalSesion tipo={modal.tipo} usuaria_id={usuaria.id} inicial={modal.sesion} onClose={()=>setModal(null)}
+                   onSave={(s)=>{ modal.sesion ? updSesion(modal.sesion.id, s) : addSesion(s); setModal(null);}} />}
+      {modalAyuda && <ModalAyuda beca={becaById(modalAyuda.tipo)} usuaria_id={usuaria.id} inicial={modalAyuda.ayuda} onClose={()=>setModalAyuda(null)}
+                   onSave={(a)=>{ modalAyuda.ayuda ? updAyuda(modalAyuda.ayuda.id, a) : addAyuda(a); setModalAyuda(null);}} />}
     </div>
   );
 }
@@ -787,9 +867,12 @@ function Ficha({ usuaria, updUsuaria }){
   );
 }
 
-function ModalSesion({ tipo, usuaria_id, onClose, onSave }){
+function ModalSesion({ tipo, usuaria_id, inicial, onClose, onSave }){
   const svc=svcById(tipo);
-  const [f,setF]=useState({ usuaria_id, tipo, trabajadora_id:"mar", horas:1, tarifa:svc.tarifa, fecha:hoyStr(), facturado:false, fecha_facturacion:"" });
+  const editando=!!inicial;
+  const [f,setF]=useState(inicial
+    ? { usuaria_id, tipo, trabajadora_id:inicial.trabajadora_id, horas:inicial.horas, tarifa:inicial.tarifa, fecha:inicial.fecha, facturado:!!inicial.facturado, fecha_facturacion:inicial.fecha_facturacion||"" }
+    : { usuaria_id, tipo, trabajadora_id:"mar", horas:1, tarifa:svc.tarifa, fecha:hoyStr(), facturado:false, fecha_facturacion:"" });
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
   function guardar(){
     onSave({
@@ -801,7 +884,7 @@ function ModalSesion({ tipo, usuaria_id, onClose, onSave }){
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
-        <div className="modal-head"><h2 style={{fontSize:18}}>Nueva sesión · {svc.label}</h2><button className="btn-ghost btn" onClick={onClose}>✕</button></div>
+        <div className="modal-head"><h2 style={{fontSize:18}}>{editando?"Editar sesión":"Nueva sesión"} · {svc.label}</h2><button className="btn-ghost btn" onClick={onClose}>✕</button></div>
         <div className="modal-body">
           <div className="grid2" style={{marginBottom:13}}>
             <div className="field"><label>Horas</label><input type="number" min="0.5" step="0.5" value={f.horas} onChange={e=>set("horas",e.target.value)} /></div>
@@ -829,7 +912,7 @@ function ModalSesion({ tipo, usuaria_id, onClose, onSave }){
             </div>}
           <div className="row" style={{justifyContent:"flex-end",marginTop:8}}>
             <button className="btn" onClick={onClose}>Cancelar</button>
-            <button className="btn btn-primary" disabled={!f.horas||Number(f.horas)<=0} onClick={guardar}>Guardar sesión</button>
+            <button className="btn btn-primary" disabled={!f.horas||Number(f.horas)<=0} onClick={guardar}>{editando?"Guardar cambios":"Guardar sesión"}</button>
           </div>
         </div>
       </div>
@@ -837,8 +920,11 @@ function ModalSesion({ tipo, usuaria_id, onClose, onSave }){
   );
 }
 
-function ModalAyuda({ beca, usuaria_id, onClose, onSave }){
-  const [f,setF]=useState({ usuaria_id, tipo:beca.id, concepto:"", importe:"", fecha:hoyStr() });
+function ModalAyuda({ beca, usuaria_id, inicial, onClose, onSave }){
+  const editando=!!inicial;
+  const [f,setF]=useState(inicial
+    ? { usuaria_id, tipo:beca.id, concepto:inicial.concepto||"", importe:inicial.importe??"", fecha:inicial.fecha||hoyStr() }
+    : { usuaria_id, tipo:beca.id, concepto:"", importe:"", fecha:hoyStr() });
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
   function guardar(){
     onSave({ usuaria_id:f.usuaria_id, tipo:f.tipo, concepto:f.concepto||null, importe:Number(f.importe)||0, fecha:f.fecha });
@@ -846,7 +932,7 @@ function ModalAyuda({ beca, usuaria_id, onClose, onSave }){
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={e=>e.stopPropagation()}>
-        <div className="modal-head"><h2 style={{fontSize:18}}>{beca.label}</h2><button className="btn-ghost btn" onClick={onClose}>✕</button></div>
+        <div className="modal-head"><h2 style={{fontSize:18}}>{editando?"Editar · ":""}{beca.label}</h2><button className="btn-ghost btn" onClick={onClose}>✕</button></div>
         <div className="modal-body">
           <div className="field" style={{marginBottom:13}}>
             <label>Concepto</label>
