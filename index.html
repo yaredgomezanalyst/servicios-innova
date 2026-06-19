@@ -110,7 +110,9 @@
   .field{display:flex; flex-direction:column; gap:5px}
   .field label{font-size:11.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-soft)}
   .field input,.field select{border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:9px 11px; background:#fff; color:var(--ink)}
-  .field input:focus,.field select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  .field textarea{border:1px solid var(--line-strong); border-radius:var(--radius-sm); padding:9px 11px; background:#fff; color:var(--ink); font-family:inherit; font-size:14px; resize:vertical; line-height:1.5}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  .ficha-grid{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:6px}
 
   /* CALENDAR */
   .cal-head{display:flex; align-items:center; gap:14px}
@@ -203,6 +205,7 @@
     .cell{min-height:78px}
     .grid2{grid-template-columns:1fr}
     .sidebar-cols{grid-template-columns:1fr !important}
+    .ficha-grid{grid-template-columns:1fr}
     .kpis{grid-template-columns:1fr 1fr}
     .dash-cols{grid-template-columns:1fr}
   }
@@ -232,6 +235,13 @@ const SERVICIOS = [
 ];
 const svcById = (id) => SERVICIOS.find(s => s.id === id) || SERVICIOS[0];
 
+// Becas / ayudas económicas: concepto libre + importe + fecha
+const BECAS = [
+  { id: "transporte",  label: "Beca de transporte",   ph: "ej. ticket bus, gasolina, taxi…" },
+  { id: "conciliacion",label: "Beca de conciliación", ph: "ej. niñera, guardería…" },
+];
+const becaById = (id) => BECAS.find(b => b.id === id) || BECAS[0];
+
 /* ───────────────── Modo (demo / real) ───────────────── */
 const SUPA_OK = !!(window.SUPABASE_URL && window.SUPABASE_ANON_KEY && window.supabase);
 const supa = SUPA_OK ? window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY) : null;
@@ -255,7 +265,7 @@ const fmtEur = (n) => (Number(n)||0).toLocaleString("es-ES",{style:"currency",cu
 /* ───────────────── Datos demo ───────────────── */
 function datosDemo(){
   // Sin datos de ejemplo. Al conectar Supabase, todo se carga desde la base de datos.
-  return { usuarias:[], sesiones:[], citas:[] };
+  return { usuarias:[], sesiones:[], citas:[], ayudas:[] };
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -311,7 +321,7 @@ function Login(){
 /* ───────────────── Pantalla principal ───────────────── */
 function Main({ session }){
   const [tab,setTab]=useState("calendario");
-  const [data,setData]=useState({usuarias:[],sesiones:[],citas:[]});
+  const [data,setData]=useState({usuarias:[],sesiones:[],citas:[],ayudas:[]});
   const [loading,setLoading]=useState(true);
 
   useEffect(()=>{ cargar(); },[]);
@@ -319,12 +329,13 @@ function Main({ session }){
   async function cargar(){
     setLoading(true);
     if(!SUPA_OK){ setData(datosDemo()); setLoading(false); return; }
-    const [u,s,c] = await Promise.all([
+    const [u,s,c,a] = await Promise.all([
       supa.from("usuarias").select("*").order("nombre"),
       supa.from("sesiones").select("*").order("fecha",{ascending:false}),
       supa.from("citas").select("*").order("fecha"),
+      supa.from("ayudas").select("*").order("fecha",{ascending:false}),
     ]);
-    setData({ usuarias:u.data||[], sesiones:s.data||[], citas:c.data||[] });
+    setData({ usuarias:u.data||[], sesiones:s.data||[], citas:c.data||[], ayudas:a.data||[] });
     setLoading(false);
   }
 
@@ -352,6 +363,18 @@ function Main({ session }){
   async function delSesion(id){
     if(!SUPA_OK){ setData(d=>({...d, sesiones:d.sesiones.filter(x=>x.id!==id)})); return; }
     await supa.from("sesiones").delete().eq("id",id); cargar();
+  }
+  async function updUsuaria(id,patch){
+    if(!SUPA_OK){ setData(d=>({...d, usuarias:d.usuarias.map(x=>x.id===id?{...x,...patch}:x)})); return; }
+    await supa.from("usuarias").update(patch).eq("id",id); cargar();
+  }
+  async function addAyuda(a){
+    if(!SUPA_OK){ setData(d=>({...d, ayudas:[{...a,id:uid()},...d.ayudas]})); return; }
+    await supa.from("ayudas").insert(a); cargar();
+  }
+  async function delAyuda(id){
+    if(!SUPA_OK){ setData(d=>({...d, ayudas:d.ayudas.filter(x=>x.id!==id)})); return; }
+    await supa.from("ayudas").delete().eq("id",id); cargar();
   }
 
   return (
@@ -383,7 +406,7 @@ function Main({ session }){
             ? <Resumen data={data} />
             : tab==="calendario"
             ? <Calendario citas={data.citas} onAdd={addCita} onDel={delCita} />
-            : <Servicios data={data} addUsuaria={addUsuaria} addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} />
+            : <Servicios data={data} addUsuaria={addUsuaria} addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} />
         }
       </div>
     </div>
@@ -526,10 +549,21 @@ function ModalCita({ fecha, onClose, onSave }){
 }
 
 /* ════════════════════════ SERVICIOS ════════════════════════ */
-function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion }){
+function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda }){
   const [sel,setSel]=useState(data.usuarias[0]?.id||null);
   const [nuevaU,setNuevaU]=useState("");
+  const [orden,setOrden]=useState("nombre"); // nombre | orientacion | formacion | acogida
   const usuaria=data.usuarias.find(u=>u.id===sel);
+
+  // horas por servicio de cada usuaria (para ordenar y mostrar)
+  const horasDe = (uid, tipo) => data.sesiones
+    .filter(s=>s.usuaria_id===uid && s.tipo===tipo)
+    .reduce((a,s)=>a+Number(s.horas||0),0);
+
+  const lista = [...data.usuarias].sort((a,b)=>{
+    if(orden==="nombre") return (a.nombre||"").localeCompare(b.nombre||"");
+    return horasDe(b.id,orden) - horasDe(a.id,orden); // mayor a menor
+  });
 
   async function crearUsuaria(){
     const nombre=nuevaU.trim(); if(!nombre) return;
@@ -540,12 +574,24 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion }){
     <div className="sidebar-cols">
       {/* lista de usuarias */}
       <div className="card card-pad">
-        <h3 style={{fontSize:15,marginBottom:12}}>Usuarias</h3>
+        <h3 style={{fontSize:15,marginBottom:10}}>Usuarias</h3>
+        <div className="field" style={{marginBottom:12}}>
+          <label>Ordenar por</label>
+          <select value={orden} onChange={e=>setOrden(e.target.value)}>
+            <option value="nombre">Nombre (A–Z)</option>
+            <option value="orientacion">Horas de orientación (mayor→menor)</option>
+            <option value="formacion">Horas de formación (mayor→menor)</option>
+            <option value="acogida">Horas de acogida (mayor→menor)</option>
+          </select>
+        </div>
         <div className="usuaria-list">
-          {data.usuarias.length===0 && <p className="small muted">Aún no hay usuarias.</p>}
-          {data.usuarias.map(u=>(
+          {lista.length===0 && <p className="small muted">Aún no hay usuarias.</p>}
+          {lista.map(u=>(
             <button key={u.id} className={"usuaria-btn"+(u.id===sel?" active":"")} onClick={()=>setSel(u.id)}>
               <span className="nm">{u.nombre}</span>
+              <div className="tiny muted" style={{marginTop:3}}>
+                Ac {horasDe(u.id,"acogida")} · Or {horasDe(u.id,"orientacion")} · Fo {horasDe(u.id,"formacion")} h
+              </div>
             </button>
           ))}
         </div>
@@ -564,21 +610,26 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion }){
           ? <div className="card empty">Selecciona o crea una usuaria para ver sus servicios.</div>
           : <DetalleUsuaria usuaria={usuaria}
               sesiones={data.sesiones.filter(s=>s.usuaria_id===usuaria.id)}
-              addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} />
+              ayudas={data.ayudas.filter(a=>a.usuaria_id===usuaria.id)}
+              addSesion={addSesion} updSesion={updSesion} delSesion={delSesion}
+              updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} />
         }
       </div>
     </div>
   );
 }
 
-function DetalleUsuaria({ usuaria, sesiones, addSesion, updSesion, delSesion }){
-  const [modal,setModal]=useState(null); // {tipo}
+function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda }){
+  const [modal,setModal]=useState(null); // sesión {tipo}
+  const [modalAyuda,setModalAyuda]=useState(null); // ayuda {tipo}
   return (
     <div>
       <div className="card card-pad" style={{marginBottom:18}}>
         <h2 style={{fontSize:21}}>{usuaria.nombre}</h2>
-        <p className="small muted" style={{marginTop:2}}>Horas por servicio, fechas y estado de facturación.</p>
+        <p className="small muted" style={{marginTop:2}}>Ficha, horas por servicio y becas.</p>
       </div>
+
+      <Ficha key={usuaria.id} usuaria={usuaria} updUsuaria={updUsuaria} />
 
       {SERVICIOS.map(svc=>{
         const sess=sesiones.filter(s=>s.tipo===svc.id).sort((a,b)=>b.fecha.localeCompare(a.fecha));
@@ -643,7 +694,95 @@ function DetalleUsuaria({ usuaria, sesiones, addSesion, updSesion, delSesion }){
         );
       })}
 
+      <div style={{margin:"22px 0 10px"}}><h3 style={{fontSize:16}}>Becas y ayudas económicas</h3></div>
+      {BECAS.map(beca=>{
+        const items = ayudas.filter(a=>a.tipo===beca.id).sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+        const total = items.reduce((a,x)=>a+Number(x.importe||0),0);
+        return (
+          <div key={beca.id} className="svc">
+            <div className="svc-head" style={{background:"var(--paper)"}}>
+              <span className="svc-name">{beca.label}</span>
+              <div className="svc-stats"><div><div className="tiny muted">Total entregado</div><b>{fmtEur(total)}</b></div></div>
+              <button className="btn btn-sm" onClick={()=>setModalAyuda({tipo:beca.id})}>+ Añadir</button>
+            </div>
+            {items.length>0 &&
+              <table className="sess">
+                <thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th><th></th></tr></thead>
+                <tbody>
+                  {items.map(x=>(
+                    <tr key={x.id}>
+                      <td>{fmtFecha(x.fecha)}</td>
+                      <td>{x.concepto||"—"}</td>
+                      <td><b>{fmtEur(x.importe)}</b></td>
+                      <td style={{textAlign:"right"}}>
+                        <button className="btn btn-sm btn-ghost btn-danger" onClick={()=>{if(confirm("¿Eliminar este registro?")) delAyuda(x.id);}}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>}
+          </div>
+        );
+      })}
+
       {modal && <ModalSesion tipo={modal.tipo} usuaria_id={usuaria.id} onClose={()=>setModal(null)} onSave={(s)=>{addSesion(s); setModal(null);}} />}
+      {modalAyuda && <ModalAyuda beca={becaById(modalAyuda.tipo)} usuaria_id={usuaria.id} onClose={()=>setModalAyuda(null)} onSave={(a)=>{addAyuda(a); setModalAyuda(null);}} />}
+    </div>
+  );
+}
+
+function Ficha({ usuaria, updUsuaria }){
+  const [f,setF]=useState({
+    numero_cuenta: usuaria.numero_cuenta||"",
+    discapacidad: !!usuaria.discapacidad,
+    trabajando: !!usuaria.trabajando,
+    trabajo_donde: usuaria.trabajo_donde||"",
+    observaciones: usuaria.observaciones||"",
+  });
+  const [guardado,setGuardado]=useState(false);
+  const set=(k,v)=>{ setF(s=>({...s,[k]:v})); setGuardado(false); };
+  function guardar(){
+    updUsuaria(usuaria.id,{
+      numero_cuenta:f.numero_cuenta||null,
+      discapacidad:f.discapacidad,
+      trabajando:f.trabajando,
+      trabajo_donde:f.trabajando?(f.trabajo_donde||null):null,
+      observaciones:f.observaciones||null,
+    });
+    setGuardado(true);
+  }
+  return (
+    <div className="card card-pad" style={{marginBottom:18}}>
+      <div className="spread" style={{marginBottom:14}}>
+        <h3 style={{fontSize:16}}>Ficha de la usuaria</h3>
+        <div className="row" style={{gap:10}}>
+          {guardado && <span className="tiny" style={{color:"var(--ok)",fontWeight:700}}>Guardado ✓</span>}
+          <button className="btn btn-primary btn-sm" onClick={guardar}>Guardar ficha</button>
+        </div>
+      </div>
+      <div className="ficha-grid">
+        <div className="field">
+          <label>Número de cuenta</label>
+          <input value={f.numero_cuenta} onChange={e=>set("numero_cuenta",e.target.value)} placeholder="ES.." />
+        </div>
+        <div className="checkline" style={{alignSelf:"end",paddingBottom:9}}>
+          <input type="checkbox" id="disc" checked={f.discapacidad} onChange={e=>set("discapacidad",e.target.checked)} />
+          <label htmlFor="disc" style={{fontWeight:600}}>Discapacidad reconocida</label>
+        </div>
+      </div>
+      <div className="checkline" style={{margin:"6px 0 10px"}}>
+        <input type="checkbox" id="trab" checked={f.trabajando} onChange={e=>set("trabajando",e.target.checked)} />
+        <label htmlFor="trab" style={{fontWeight:600}}>Inserción laboral · está trabajando</label>
+      </div>
+      {f.trabajando &&
+        <div className="field" style={{marginBottom:12}}>
+          <label>¿Dónde? (empresa, puesto, jornada…)</label>
+          <textarea rows="2" value={f.trabajo_donde} onChange={e=>set("trabajo_donde",e.target.value)} />
+        </div>}
+      <div className="field">
+        <label>Observaciones</label>
+        <textarea rows="3" value={f.observaciones} onChange={e=>set("observaciones",e.target.value)} placeholder="Algo a tener en cuenta sobre esta usuaria" />
+      </div>
     </div>
   );
 }
@@ -691,6 +830,35 @@ function ModalSesion({ tipo, usuaria_id, onClose, onSave }){
           <div className="row" style={{justifyContent:"flex-end",marginTop:8}}>
             <button className="btn" onClick={onClose}>Cancelar</button>
             <button className="btn btn-primary" disabled={!f.horas||Number(f.horas)<=0} onClick={guardar}>Guardar sesión</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalAyuda({ beca, usuaria_id, onClose, onSave }){
+  const [f,setF]=useState({ usuaria_id, tipo:beca.id, concepto:"", importe:"", fecha:hoyStr() });
+  const set=(k,v)=>setF(s=>({...s,[k]:v}));
+  function guardar(){
+    onSave({ usuaria_id:f.usuaria_id, tipo:f.tipo, concepto:f.concepto||null, importe:Number(f.importe)||0, fecha:f.fecha });
+  }
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-head"><h2 style={{fontSize:18}}>{beca.label}</h2><button className="btn-ghost btn" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div className="field" style={{marginBottom:13}}>
+            <label>Concepto</label>
+            <input value={f.concepto} onChange={e=>set("concepto",e.target.value)} placeholder={beca.ph} />
+          </div>
+          <div className="grid2" style={{marginBottom:20}}>
+            <div className="field"><label>Importe (€)</label><input type="number" min="0" step="0.01" value={f.importe} onChange={e=>set("importe",e.target.value)} /></div>
+            <div className="field"><label>Fecha</label><input type="date" value={f.fecha} onChange={e=>set("fecha",e.target.value)} /></div>
+          </div>
+          <div className="row" style={{justifyContent:"flex-end"}}>
+            <button className="btn" onClick={onClose}>Cancelar</button>
+            <button className="btn btn-primary" onClick={guardar}>Guardar</button>
           </div>
         </div>
       </div>
