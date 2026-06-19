@@ -286,6 +286,8 @@ function exportarExcel(data){
     "Fecha": fmtFecha(s.fecha),
     "Facturado": sn(s.facturado),
     "Fecha facturación": s.facturado?fmtFecha(s.fecha_facturacion):"",
+    "Doc. subida a STO": sn(s.doc_subida),
+    "Fecha doc. STO": s.doc_subida?fmtFecha(s.doc_fecha):"",
     "Trabajadora": traById(s.trabajadora_id).nombre,
   }));
   const hBecas = data.ayudas.map(a=>({
@@ -739,7 +741,7 @@ function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSe
 
             {sess.length>0 &&
               <table className="sess">
-                <thead><tr><th>Fecha</th><th>Horas</th><th>Importe</th><th>Trabajadora</th><th>Facturado</th><th>Mes facturación</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Horas</th><th>Importe</th><th>Trabajadora</th><th>Facturado</th><th>Mes facturación</th><th>Doc. STO</th><th></th></tr></thead>
                 <tbody>
                   {sess.map(s=>{
                     const t=traById(s.trabajadora_id);
@@ -755,6 +757,11 @@ function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSe
                             : <span className="pill pill-no">No</span>}
                         </td>
                         <td className="small muted" style={{textTransform:"capitalize"}}>{s.facturado?mesAnio(s.fecha_facturacion):"sin facturar"}</td>
+                        <td>
+                          {s.doc_subida
+                            ? <span className="pill pill-yes">Sí · {fmtFecha(s.doc_fecha)}</span>
+                            : <button className="btn btn-sm" onClick={()=>{const d=prompt("Fecha de subida a STO (DD/MM/AAAA):",fmtFecha(hoyStr())); if(d){const p=d.split("/"); if(p.length===3) updSesion(s.id,{doc_subida:true,doc_fecha:`${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}`});}}}>Marcar</button>}
+                        </td>
                         <td style={{textAlign:"right",whiteSpace:"nowrap"}}>
                           {!s.facturado
                             ? <button className="btn btn-sm" onClick={()=>{const fac=prompt("Fecha de facturación (DD/MM/AAAA):",fmtFecha(hoyStr())); if(fac){const p=fac.split("/"); if(p.length===3) updSesion(s.id,{facturado:true,fecha_facturacion:`${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}`});}}}>Facturar</button>
@@ -871,14 +878,15 @@ function ModalSesion({ tipo, usuaria_id, inicial, onClose, onSave }){
   const svc=svcById(tipo);
   const editando=!!inicial;
   const [f,setF]=useState(inicial
-    ? { usuaria_id, tipo, trabajadora_id:inicial.trabajadora_id, horas:inicial.horas, tarifa:inicial.tarifa, fecha:inicial.fecha, facturado:!!inicial.facturado, fecha_facturacion:inicial.fecha_facturacion||"" }
-    : { usuaria_id, tipo, trabajadora_id:"mar", horas:1, tarifa:svc.tarifa, fecha:hoyStr(), facturado:false, fecha_facturacion:"" });
+    ? { usuaria_id, tipo, trabajadora_id:inicial.trabajadora_id, horas:inicial.horas, tarifa:inicial.tarifa, fecha:inicial.fecha, facturado:!!inicial.facturado, fecha_facturacion:inicial.fecha_facturacion||"", doc_subida:!!inicial.doc_subida, doc_fecha:inicial.doc_fecha||"" }
+    : { usuaria_id, tipo, trabajadora_id:"mar", horas:1, tarifa:svc.tarifa, fecha:hoyStr(), facturado:false, fecha_facturacion:"", doc_subida:false, doc_fecha:"" });
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
   function guardar(){
     onSave({
       usuaria_id:f.usuaria_id, tipo:f.tipo, trabajadora_id:f.trabajadora_id,
       horas:Number(f.horas), tarifa:Number(f.tarifa), fecha:f.fecha,
       facturado:f.facturado, fecha_facturacion:f.facturado?(f.fecha_facturacion||null):null,
+      doc_subida:f.doc_subida, doc_fecha:f.doc_subida?(f.doc_fecha||null):null,
     });
   }
   return (
@@ -909,6 +917,15 @@ function ModalSesion({ tipo, usuaria_id, inicial, onClose, onSave }){
             <div className="field" style={{marginBottom:18}}>
               <label>Fecha de facturación</label>
               <input type="date" value={f.fecha_facturacion} onChange={e=>set("fecha_facturacion",e.target.value)} />
+            </div>}
+          <div className="checkline" style={{marginBottom:13,borderTop:"1px solid var(--line)",paddingTop:14}}>
+            <input type="checkbox" id="doc" checked={f.doc_subida} onChange={e=>set("doc_subida",e.target.checked)} />
+            <label htmlFor="doc" style={{fontWeight:600}}>Documentación subida a STO</label>
+          </div>
+          {f.doc_subida &&
+            <div className="field" style={{marginBottom:18}}>
+              <label>Fecha de subida a STO</label>
+              <input type="date" value={f.doc_fecha} onChange={e=>set("doc_fecha",e.target.value)} />
             </div>}
           <div className="row" style={{justifyContent:"flex-end",marginTop:8}}>
             <button className="btn" onClick={onClose}>Cancelar</button>
