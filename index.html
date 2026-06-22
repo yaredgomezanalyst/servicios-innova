@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow, noarchive" />
 <title>Gestión de servicios · VG</title>
 
 <!-- ╔══════════════════════════════════════════════════════════════╗
@@ -296,6 +297,10 @@ function exportarExcel(data){
     "Concepto": a.concepto||"",
     "Importe (€)": Number(a.importe||0),
     "Fecha": fmtFecha(a.fecha),
+    "Facturado": sn(a.facturado),
+    "Fecha facturación": a.facturado?fmtFecha(a.fecha_facturacion):"",
+    "Doc. subida a STO": sn(a.doc_subida),
+    "Fecha doc. STO": a.doc_subida?fmtFecha(a.doc_fecha):"",
   }));
   const hCitas = data.citas.map(c=>({
     "Trabajadora": traById(c.trabajadora_id).nombre,
@@ -482,6 +487,7 @@ function Calendario({ citas, onAdd, onDel }){
   const [cursor,setCursor]=useState(()=>{ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth()}; });
   const [filtro,setFiltro]=useState("all");
   const [modal,setModal]=useState(null); // {fecha} para nueva cita
+  const [dia,setDia]=useState(null);     // {fecha} para ver todas las citas del día
 
   const meses=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
   const prefijoMes = `${cursor.y}-${String(cursor.m+1).padStart(2,"0")}`;
@@ -548,24 +554,63 @@ function Calendario({ citas, onAdd, onDel }){
           const esHoy=fecha===hoyStr();
           const items=citasPorDia[d]||[];
           return (
-            <div key={i} className={"cell"+(esHoy?" today":"")} onClick={()=>setModal({fecha})}>
+            <div key={i} className={"cell"+(esHoy?" today":"")} onClick={()=>setDia({fecha})}>
               <span className="daynum">{d}</span>
               {items.slice(0,4).map(c=>{
                 const t=traById(c.trabajadora_id);
                 return <div key={c.id} className="chip" title={`${c.hora_inicio||""} ${c.usuaria} · ${t.nombre}`}
-                            style={{background:t.bg,color:t.color,borderLeftColor:t.color}}
-                            onClick={(e)=>{e.stopPropagation(); if(confirm(`¿Eliminar la cita de ${c.usuaria} (${t.nombre})?`)) onDel(c.id);}}>
+                            style={{background:t.bg,color:t.color,borderLeftColor:t.color}}>
                   {c.hora_inicio?c.hora_inicio+" ":""}{c.usuaria}
                 </div>;
               })}
-              {items.length>4 && <span className="tiny muted">+{items.length-4} más</span>}
+              {items.length>4 && <span className="tiny" style={{color:"var(--accent)",fontWeight:700}}>+{items.length-4} más →</span>}
             </div>
           );
         })}
       </div>
-      <p className="tiny muted" style={{marginTop:10}}>Toca un día para añadir una cita · toca una cita para eliminarla · los números junto a cada nombre son las citas de ese mes.</p>
+      <p className="tiny muted" style={{marginTop:10}}>Toca un día para ver y gestionar todas sus citas · los números junto a cada nombre son las citas de ese mes.</p>
 
       {modal && <ModalCita fecha={modal.fecha} onClose={()=>setModal(null)} onSave={(c)=>{onAdd(c); setModal(null);}} />}
+      {dia && <ModalDia fecha={dia.fecha}
+                citas={citas.filter(c=>c.fecha===dia.fecha).sort((a,b)=>(a.hora_inicio||"").localeCompare(b.hora_inicio||""))}
+                onDel={onDel}
+                onAdd={(fecha)=>{ setDia(null); setModal({fecha}); }}
+                onClose={()=>setDia(null)} />}
+    </div>
+  );
+}
+
+function ModalDia({ fecha, citas, onDel, onAdd, onClose }){
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <div className="modal-head">
+          <h2 style={{fontSize:18}}>Citas del {fmtFecha(fecha)}</h2>
+          <button className="btn-ghost btn" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          {citas.length===0
+            ? <p className="small muted" style={{marginBottom:16}}>No hay citas este día.</p>
+            : <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+                {citas.map(c=>{
+                  const t=traById(c.trabajadora_id);
+                  return (
+                    <div key={c.id} className="row" style={{justifyContent:"space-between",gap:10,padding:"9px 12px",border:"1px solid var(--line)",borderRadius:"var(--radius-sm)",borderLeft:`3px solid ${t.raw}`}}>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:14}}>{c.hora_inicio?c.hora_inicio+" · ":""}{c.usuaria}</div>
+                        <div className="tiny muted" style={{marginTop:2}}>
+                          <span className="dot" style={{display:"inline-block",background:t.color,marginRight:5}}></span>{t.nombre}
+                          {c.servicio? " · "+svcById(c.servicio).label : ""}{c.nota? " · "+c.nota : ""}
+                        </div>
+                      </div>
+                      <button className="btn btn-sm btn-ghost btn-danger" title="Eliminar" onClick={()=>{if(confirm(`¿Eliminar la cita de ${c.usuaria}?`)) onDel(c.id);}}>✕</button>
+                    </div>
+                  );
+                })}
+              </div>}
+          <button className="btn btn-primary" style={{width:"100%"}} onClick={()=>onAdd(fecha)}>+ Añadir cita a este día</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -614,25 +659,32 @@ function ModalCita({ fecha, onClose, onSave }){
 
 /* ════════════════════════ SERVICIOS ════════════════════════ */
 function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda, updAyuda, delUsuaria }){
-  const [sel,setSel]=useState(data.usuarias[0]?.id||null);
+  const [sel,setSel]=useState(null);
   const [nuevaU,setNuevaU]=useState("");
-  const [orden,setOrden]=useState("nombre"); // nombre | orientacion | formacion | acogida
+  const [orden,setOrden]=useState("nombre");
+  const [busca,setBusca]=useState("");
+  const [pagina,setPagina]=useState(0);
   const usuaria=data.usuarias.find(u=>u.id===sel);
+  const PORPAG=10;
 
-  async function eliminarUsuaria(id){
-    await delUsuaria(id);
-    setSel(null);
-  }
+  const norm = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
 
-  // horas por servicio de cada usuaria (para ordenar y mostrar)
+  async function eliminarUsuaria(id){ await delUsuaria(id); setSel(null); }
+
   const horasDe = (uid, tipo) => data.sesiones
     .filter(s=>s.usuaria_id===uid && s.tipo===tipo)
     .reduce((a,s)=>a+Number(s.horas||0),0);
 
-  const lista = [...data.usuarias].sort((a,b)=>{
-    if(orden==="nombre") return (a.nombre||"").localeCompare(b.nombre||"");
-    return horasDe(b.id,orden) - horasDe(a.id,orden); // mayor a menor
-  });
+  const filtradas = [...data.usuarias]
+    .filter(u=>norm(u.nombre).includes(norm(busca)))
+    .sort((a,b)=>{
+      if(orden==="nombre") return (a.nombre||"").localeCompare(b.nombre||"");
+      return horasDe(b.id,orden) - horasDe(a.id,orden);
+    });
+
+  const totalPag = Math.max(1, Math.ceil(filtradas.length/PORPAG));
+  const pag = Math.min(pagina, totalPag-1);
+  const visibles = filtradas.slice(pag*PORPAG, pag*PORPAG+PORPAG);
 
   async function crearUsuaria(){
     const nombre=nuevaU.trim(); if(!nombre) return;
@@ -641,30 +693,22 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuar
 
   return (
     <div className="sidebar-cols">
-      {/* lista de usuarias */}
+      {/* barra lateral: buscar, ordenar, añadir */}
       <div className="card card-pad">
-        <h3 style={{fontSize:15,marginBottom:10}}>Usuarias</h3>
-        <div className="field" style={{marginBottom:12}}>
+        <div className="field" style={{marginBottom:16}}>
+          <label>🔍 Buscar usuaria</label>
+          <input value={busca} onChange={e=>{setBusca(e.target.value); setPagina(0);}} placeholder="Escribe un nombre…" />
+        </div>
+        <div className="field" style={{marginBottom:16}}>
           <label>Ordenar por</label>
-          <select value={orden} onChange={e=>setOrden(e.target.value)}>
+          <select value={orden} onChange={e=>{setOrden(e.target.value); setPagina(0);}}>
             <option value="nombre">Nombre (A–Z)</option>
             <option value="orientacion">Horas de orientación (mayor→menor)</option>
             <option value="formacion">Horas de formación (mayor→menor)</option>
             <option value="acogida">Horas de acogida (mayor→menor)</option>
           </select>
         </div>
-        <div className="usuaria-list">
-          {lista.length===0 && <p className="small muted">Aún no hay usuarias.</p>}
-          {lista.map(u=>(
-            <button key={u.id} className={"usuaria-btn"+(u.id===sel?" active":"")} onClick={()=>setSel(u.id)}>
-              <span className="nm">{u.nombre}</span>
-              <div className="tiny muted" style={{marginTop:3}}>
-                Ac {horasDe(u.id,"acogida")} · Or {horasDe(u.id,"orientacion")} · Fo {horasDe(u.id,"formacion")} h
-              </div>
-            </button>
-          ))}
-        </div>
-        <div style={{marginTop:14,borderTop:"1px solid var(--line)",paddingTop:14}}>
+        <div style={{borderTop:"1px solid var(--line)",paddingTop:16}}>
           <div className="field">
             <label>Añadir usuaria</label>
             <input value={nuevaU} onChange={e=>setNuevaU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&crearUsuaria()} placeholder="iniciales o código" />
@@ -673,17 +717,41 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuar
         </div>
       </div>
 
-      {/* detalle */}
+      {/* panel central */}
       <div>
-        {!usuaria
-          ? <div className="card empty">Selecciona o crea una usuaria para ver sus servicios.</div>
-          : <DetalleUsuaria usuaria={usuaria}
-              sesiones={data.sesiones.filter(s=>s.usuaria_id===usuaria.id)}
-              ayudas={data.ayudas.filter(a=>a.usuaria_id===usuaria.id)}
-              addSesion={addSesion} updSesion={updSesion} delSesion={delSesion}
-              updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda}
-              onDeleteUsuaria={eliminarUsuaria} />
-        }
+        {usuaria
+          ? <div>
+              <button className="btn btn-sm" style={{marginBottom:14}} onClick={()=>setSel(null)}>← Volver al listado</button>
+              <DetalleUsuaria usuaria={usuaria}
+                sesiones={data.sesiones.filter(s=>s.usuaria_id===usuaria.id)}
+                ayudas={data.ayudas.filter(a=>a.usuaria_id===usuaria.id)}
+                addSesion={addSesion} updSesion={updSesion} delSesion={delSesion}
+                updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda}
+                onDeleteUsuaria={eliminarUsuaria} />
+            </div>
+          : <div className="card card-pad">
+              <div className="spread" style={{marginBottom:12}}>
+                <h3 style={{fontSize:15}}>Usuarias <span className="muted" style={{fontWeight:400}}>({filtradas.length})</span></h3>
+              </div>
+              {filtradas.length===0
+                ? <p className="small muted" style={{padding:"20px 0"}}>{data.usuarias.length===0?"Aún no hay usuarias. Añade la primera en la barra de la izquierda.":"No hay ninguna usuaria que coincida con la búsqueda."}</p>
+                : <div className="usuaria-list">
+                    {visibles.map(u=>(
+                      <button key={u.id} className="usuaria-btn" onClick={()=>setSel(u.id)}>
+                        <span className="nm">{u.nombre}</span>
+                        <div className="tiny muted" style={{marginTop:3}}>
+                          Ac {horasDe(u.id,"acogida")} · Or {horasDe(u.id,"orientacion")} · Fo {horasDe(u.id,"formacion")} h
+                        </div>
+                      </button>
+                    ))}
+                  </div>}
+              {totalPag>1 &&
+                <div className="spread" style={{marginTop:16,borderTop:"1px solid var(--line)",paddingTop:14}}>
+                  <button className="btn btn-sm" disabled={pag===0} onClick={()=>setPagina(pag-1)}>‹ Anterior</button>
+                  <span className="small muted">Página {pag+1} de {totalPag}</span>
+                  <button className="btn btn-sm" disabled={pag>=totalPag-1} onClick={()=>setPagina(pag+1)}>Siguiente ›</button>
+                </div>}
+            </div>}
       </div>
     </div>
   );
@@ -791,13 +859,23 @@ function DetalleUsuaria({ usuaria, sesiones, ayudas, addSesion, updSesion, delSe
             </div>
             {items.length>0 &&
               <table className="sess">
-                <thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Concepto</th><th>Importe</th><th>Facturado</th><th>Doc. STO</th><th></th></tr></thead>
                 <tbody>
                   {items.map(x=>(
                     <tr key={x.id}>
                       <td>{fmtFecha(x.fecha)}</td>
                       <td>{x.concepto||"—"}</td>
                       <td><b>{fmtEur(x.importe)}</b></td>
+                      <td>
+                        {x.facturado
+                          ? <button className="btn btn-sm btn-ghost" title="Quitar facturación" onClick={()=>updAyuda(x.id,{facturado:false,fecha_facturacion:null})}><span className="pill pill-yes">Sí · {fmtFecha(x.fecha_facturacion)}</span></button>
+                          : <button className="btn btn-sm" onClick={()=>{const fac=prompt("Fecha de facturación (DD/MM/AAAA):",fmtFecha(hoyStr())); if(fac){const p=fac.split("/"); if(p.length===3) updAyuda(x.id,{facturado:true,fecha_facturacion:`${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}`});}}}>Facturar</button>}
+                      </td>
+                      <td>
+                        {x.doc_subida
+                          ? <button className="btn btn-sm btn-ghost" title="Quitar doc." onClick={()=>updAyuda(x.id,{doc_subida:false,doc_fecha:null})}><span className="pill pill-yes">Sí · {fmtFecha(x.doc_fecha)}</span></button>
+                          : <button className="btn btn-sm" onClick={()=>{const d=prompt("Fecha de subida a STO (DD/MM/AAAA):",fmtFecha(hoyStr())); if(d){const p=d.split("/"); if(p.length===3) updAyuda(x.id,{doc_subida:true,doc_fecha:`${p[2]}-${p[1].padStart(2,"0")}-${p[0].padStart(2,"0")}`});}}}>Marcar</button>}
+                      </td>
                       <td style={{textAlign:"right",whiteSpace:"nowrap"}}>
                         <button className="btn btn-sm btn-ghost" title="Editar" onClick={()=>setModalAyuda({tipo:beca.id, ayuda:x})}>✎</button>
                         <button className="btn btn-sm btn-ghost btn-danger" title="Eliminar" onClick={()=>{if(confirm("¿Eliminar este registro?")) delAyuda(x.id);}}>✕</button>
@@ -940,11 +1018,15 @@ function ModalSesion({ tipo, usuaria_id, inicial, onClose, onSave }){
 function ModalAyuda({ beca, usuaria_id, inicial, onClose, onSave }){
   const editando=!!inicial;
   const [f,setF]=useState(inicial
-    ? { usuaria_id, tipo:beca.id, concepto:inicial.concepto||"", importe:inicial.importe??"", fecha:inicial.fecha||hoyStr() }
-    : { usuaria_id, tipo:beca.id, concepto:"", importe:"", fecha:hoyStr() });
+    ? { usuaria_id, tipo:beca.id, concepto:inicial.concepto||"", importe:inicial.importe??"", fecha:inicial.fecha||hoyStr(), facturado:!!inicial.facturado, fecha_facturacion:inicial.fecha_facturacion||"", doc_subida:!!inicial.doc_subida, doc_fecha:inicial.doc_fecha||"" }
+    : { usuaria_id, tipo:beca.id, concepto:"", importe:"", fecha:hoyStr(), facturado:false, fecha_facturacion:"", doc_subida:false, doc_fecha:"" });
   const set=(k,v)=>setF(s=>({...s,[k]:v}));
   function guardar(){
-    onSave({ usuaria_id:f.usuaria_id, tipo:f.tipo, concepto:f.concepto||null, importe:Number(f.importe)||0, fecha:f.fecha });
+    onSave({
+      usuaria_id:f.usuaria_id, tipo:f.tipo, concepto:f.concepto||null, importe:Number(f.importe)||0, fecha:f.fecha,
+      facturado:f.facturado, fecha_facturacion:f.facturado?(f.fecha_facturacion||null):null,
+      doc_subida:f.doc_subida, doc_fecha:f.doc_subida?(f.doc_fecha||null):null,
+    });
   }
   return (
     <div className="overlay" onClick={onClose}>
@@ -955,13 +1037,31 @@ function ModalAyuda({ beca, usuaria_id, inicial, onClose, onSave }){
             <label>Concepto</label>
             <input value={f.concepto} onChange={e=>set("concepto",e.target.value)} placeholder={beca.ph} />
           </div>
-          <div className="grid2" style={{marginBottom:20}}>
+          <div className="grid2" style={{marginBottom:14}}>
             <div className="field"><label>Importe (€)</label><input type="number" min="0" step="0.01" value={f.importe} onChange={e=>set("importe",e.target.value)} /></div>
             <div className="field"><label>Fecha</label><input type="date" value={f.fecha} onChange={e=>set("fecha",e.target.value)} /></div>
           </div>
+          <div className="checkline" style={{marginBottom:13}}>
+            <input type="checkbox" id="facA" checked={f.facturado} onChange={e=>set("facturado",e.target.checked)} />
+            <label htmlFor="facA" style={{fontWeight:600}}>Ya facturado</label>
+          </div>
+          {f.facturado &&
+            <div className="field" style={{marginBottom:14}}>
+              <label>Fecha de facturación</label>
+              <input type="date" value={f.fecha_facturacion} onChange={e=>set("fecha_facturacion",e.target.value)} />
+            </div>}
+          <div className="checkline" style={{marginBottom:13,borderTop:"1px solid var(--line)",paddingTop:14}}>
+            <input type="checkbox" id="docA" checked={f.doc_subida} onChange={e=>set("doc_subida",e.target.checked)} />
+            <label htmlFor="docA" style={{fontWeight:600}}>Documentación subida a STO</label>
+          </div>
+          {f.doc_subida &&
+            <div className="field" style={{marginBottom:18}}>
+              <label>Fecha de subida a STO</label>
+              <input type="date" value={f.doc_fecha} onChange={e=>set("doc_fecha",e.target.value)} />
+            </div>}
           <div className="row" style={{justifyContent:"flex-end"}}>
             <button className="btn" onClick={onClose}>Cancelar</button>
-            <button className="btn btn-primary" onClick={guardar}>Guardar</button>
+            <button className="btn btn-primary" onClick={guardar}>{editando?"Guardar cambios":"Guardar"}</button>
           </div>
         </div>
       </div>
