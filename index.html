@@ -828,9 +828,9 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuar
                 onDeleteUsuaria={eliminarUsuaria} />
             </div>
           : modo==="facturacion"
-            ? <VistaServicios sesiones={data.sesiones} usuarias={data.usuarias} updSesion={updSesion} busca={busca} norm={norm} userEmail={userEmail} campo="facturacion" />
+            ? <VistaServicios sesiones={data.sesiones} ayudas={data.ayudas} usuarias={data.usuarias} updSesion={updSesion} updAyuda={updAyuda} busca={busca} norm={norm} userEmail={userEmail} campo="facturacion" />
           : modo==="sto"
-            ? <VistaServicios sesiones={data.sesiones} usuarias={data.usuarias} updSesion={updSesion} busca={busca} norm={norm} userEmail={userEmail} campo="sto" />
+            ? <VistaServicios sesiones={data.sesiones} ayudas={data.ayudas} usuarias={data.usuarias} updSesion={updSesion} updAyuda={updAyuda} busca={busca} norm={norm} userEmail={userEmail} campo="sto" />
             : <div className="card card-pad">
                 <div className="spread" style={{marginBottom:12,gap:12}}>
                   <h3 style={{fontSize:15}}>Usuarias <span className="muted" style={{fontWeight:400}}>({filas.length})</span></h3>
@@ -880,16 +880,18 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuar
   );
 }
 
-function VistaServicios({ sesiones, usuarias, updSesion, busca, norm, userEmail, campo }){
-  const cfg = campo==="sto"
-    ? { boolF:"doc_subida", dateF:"doc_fecha", titulo:"Servicios · subida a STO",
-        lblPend:"Pendientes de subir", lblDone:"Subidos a STO", accion:"Marcar subido a STO",
-        pillDone:d=>`Subido · ${fmtFecha(d)}`, pillPend:"Pendiente de subir",
-        vacioPend:"pendientes de subir a STO", vacioDone:"subidos a STO", extra:{} }
-    : { boolF:"facturado", dateF:"fecha_facturacion", titulo:"Servicios · facturación",
-        lblPend:"Pendientes de facturar", lblDone:"Facturados", accion:"Marcar facturado",
-        pillDone:d=>`Facturado · ${fmtFecha(d)}`, pillPend:"Pendiente",
-        vacioPend:"pendientes de facturar", vacioDone:"facturados", extra:{facturado_por:userEmail||null} };
+function VistaServicios({ sesiones, ayudas, usuarias, updSesion, updAyuda, busca, norm, userEmail, campo }){
+  const esSTO = campo==="sto";
+  const titulo   = esSTO ? "Servicios · subida a STO" : "Servicios · facturación";
+  const lblPend  = esSTO ? "Pendientes de subir" : "Pendientes de facturar";
+  const lblDone  = esSTO ? "Subidos a STO" : "Facturados";
+  const vacioPend= esSTO ? "pendientes de subir a STO" : "pendientes de facturar";
+  const vacioDone= esSTO ? "subidos a STO" : "facturados";
+
+  // Regla: facturado ⇒ ya subido a STO
+  const subido = x => !!x.doc_subida || !!x.facturado;
+  const pend = esSTO ? (x=>!subido(x)) : (x=>x.doc_subida && !x.facturado);
+  const done = esSTO ? (x=>subido(x))  : (x=>!!x.facturado);
 
   const [estado,setEstado]=useState("pendientes"); // pendientes | hechos | todos
   const nombreU = id => (usuarias.find(u=>u.id===id)||{}).nombre || "—";
@@ -898,31 +900,58 @@ function VistaServicios({ sesiones, usuarias, updSesion, busca, norm, userEmail,
   sesiones.slice().sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).forEach(s=>{
     const k=s.usuaria_id+"|"+s.tipo; grupos[k]=(grupos[k]||0)+1; numMap[s.id]=grupos[k];
   });
-
-  const hecho = s => !!s[cfg.boolF];
-  let filas = sesiones.map(s=>({...s, _nombre:nombreU(s.usuaria_id), _num:numMap[s.id]}));
-  if(busca) filas=filas.filter(s=>norm(s._nombre).includes(norm(busca)));
-  const nPend = filas.filter(s=>!hecho(s)).length;
-  const nDone = filas.filter(s=>hecho(s)).length;
-  if(estado==="pendientes") filas=filas.filter(s=>!hecho(s));
-  else if(estado==="hechos") filas=filas.filter(s=>hecho(s));
+  const items = [
+    ...sesiones.map(s=>({ ...s, _kind:"sesion", _nombre:nombreU(s.usuaria_id), _label:svcById(s.tipo).label, _num:s.tipo==="orientacion"?numMap[s.id]:null })),
+    ...ayudas.map(a=>({ ...a, _kind:"ayuda", _nombre:nombreU(a.usuaria_id), _label:becaById(a.tipo).label, _num:null, horas:null })),
+  ];
+  let filas = busca ? items.filter(x=>norm(x._nombre).includes(norm(busca))) : items;
+  const nPend = filas.filter(pend).length;
+  const nDone = filas.filter(done).length;
+  if(estado==="pendientes") filas=filas.filter(pend);
+  else if(estado==="hechos") filas=filas.filter(done);
   filas.sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
 
-  const marcar    = s => updSesion(s.id,{[cfg.boolF]:true,  [cfg.dateF]:hoyStr(), ...cfg.extra});
-  const desmarcar = s => updSesion(s.id,{[cfg.boolF]:false, [cfg.dateF]:null, ...(campo==="facturacion"?{facturado_por:null}:{})});
+  const guardar = (x, patch) => {
+    if(x._kind==="sesion" && ("facturado" in patch)) patch = {...patch, facturado_por: patch.facturado?(userEmail||null):null};
+    (x._kind==="ayuda"?updAyuda:updSesion)(x.id, patch);
+  };
+  const marcarSTO    = x => guardar(x,{doc_subida:true,  doc_fecha:hoyStr()});
+  const desmarcarSTO = x => guardar(x,{doc_subida:false, doc_fecha:null});
+  // al facturar, marcamos también subido a STO si no lo estaba (facturado ⇒ subido)
+  const marcarFac    = x => guardar(x,{facturado:true, fecha_facturacion:hoyStr(), ...(x.doc_subida?{}:{doc_subida:true, doc_fecha:x.doc_fecha||hoyStr()})});
+  const desmarcarFac = x => guardar(x,{facturado:false, fecha_facturacion:null});
+
+  const pill = x => {
+    if(esSTO){
+      if(x.doc_subida) return <span className="pill pill-yes">Subido · {fmtFecha(x.doc_fecha)}</span>;
+      if(x.facturado)  return <span className="pill pill-yes">Subido (facturado)</span>;
+      return <span className="pill pill-no">Pendiente de subir</span>;
+    }
+    if(x.facturado) return <span className="pill pill-yes">Facturado · {fmtFecha(x.fecha_facturacion)}</span>;
+    return <span className="pill pill-no">Pendiente</span>;
+  };
+  const accion = x => {
+    if(esSTO){
+      if(!subido(x)) return <button className="btn btn-sm btn-primary" onClick={()=>marcarSTO(x)}>Marcar subido a STO</button>;
+      if(x.doc_subida && !x.facturado) return <button className="btn btn-sm btn-ghost" onClick={()=>desmarcarSTO(x)}>Desmarcar</button>;
+      return <span className="tiny muted">subido al facturar</span>;
+    }
+    if(x.facturado) return <button className="btn btn-sm btn-ghost" onClick={()=>desmarcarFac(x)}>Desmarcar</button>;
+    return <button className="btn btn-sm btn-primary" onClick={()=>marcarFac(x)}>Marcar facturado</button>;
+  };
 
   return (
     <div className="card card-pad">
       <div className="spread" style={{marginBottom:14,gap:12}}>
-        <h3 style={{fontSize:15}}>{cfg.titulo}</h3>
+        <h3 style={{fontSize:15}}>{titulo}</h3>
         <div className="row" style={{gap:6}}>
-          <button className={"btn btn-sm"+(estado==="pendientes"?" btn-primary":"")} onClick={()=>setEstado("pendientes")}>{cfg.lblPend} ({nPend})</button>
-          <button className={"btn btn-sm"+(estado==="hechos"?" btn-primary":"")} onClick={()=>setEstado("hechos")}>{cfg.lblDone} ({nDone})</button>
+          <button className={"btn btn-sm"+(estado==="pendientes"?" btn-primary":"")} onClick={()=>setEstado("pendientes")}>{lblPend} ({nPend})</button>
+          <button className={"btn btn-sm"+(estado==="hechos"?" btn-primary":"")} onClick={()=>setEstado("hechos")}>{lblDone} ({nDone})</button>
           <button className={"btn btn-sm"+(estado==="todos"?" btn-primary":"")} onClick={()=>setEstado("todos")}>Todos</button>
         </div>
       </div>
       {filas.length===0
-        ? <p className="small muted" style={{padding:"18px 0"}}>No hay servicios {estado==="pendientes"?cfg.vacioPend:estado==="hechos"?cfg.vacioDone:"registrados"}.</p>
+        ? <p className="small muted" style={{padding:"18px 0"}}>No hay servicios {estado==="pendientes"?vacioPend:estado==="hechos"?vacioDone:"registrados"}.</p>
         : <div className="mtabla-wrap">
             <table className="mtabla">
               <thead><tr>
@@ -935,25 +964,23 @@ function VistaServicios({ sesiones, usuarias, updSesion, busca, norm, userEmail,
                 <th style={{cursor:"default",textAlign:"left"}}>Acción</th>
               </tr></thead>
               <tbody>
-                {filas.map(s=>(
-                  <tr key={s.id}>
-                    <td className="nom">{s._nombre}</td>
-                    <td style={{textAlign:"left"}}>{svcById(s.tipo).label}</td>
-                    <td>{fmtFecha(s.fecha)}</td>
-                    <td>{s.tipo==="orientacion"?s._num:"—"}</td>
-                    <td><b>{s.horas} h</b></td>
-                    <td style={{textAlign:"left"}}>{hecho(s)
-                      ? <span className="pill pill-yes">{cfg.pillDone(s[cfg.dateF])}</span>
-                      : <span className="pill pill-no">{cfg.pillPend}</span>}</td>
-                    <td style={{textAlign:"left"}}>{hecho(s)
-                      ? <button className="btn btn-sm btn-ghost" onClick={()=>desmarcar(s)}>Desmarcar</button>
-                      : <button className="btn btn-sm btn-primary" onClick={()=>marcar(s)}>{cfg.accion}</button>}</td>
+                {filas.map(x=>(
+                  <tr key={x._kind+x.id}>
+                    <td className="nom">{x._nombre}</td>
+                    <td style={{textAlign:"left"}}>{x._label}</td>
+                    <td>{fmtFecha(x.fecha)}</td>
+                    <td>{x._num||"—"}</td>
+                    <td>{x.horas!=null?<b>{x.horas} h</b>:"—"}</td>
+                    <td style={{textAlign:"left"}}>{pill(x)}</td>
+                    <td style={{textAlign:"left"}}>{accion(x)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>}
-      <p className="tiny muted" style={{marginTop:10}}>Al marcar, el servicio sale de "{cfg.lblPend}" y el cambio se guarda en la base de datos (se mantiene al recargar).</p>
+      <p className="tiny muted" style={{marginTop:10}}>{esSTO
+        ? "Un servicio facturado ya cuenta como subido a STO. \"Pendientes de subir\" son los que aún no se han subido ni facturado."
+        : "Al marcar facturado se marca también como subido a STO. \"Pendientes de facturar\" son los ya subidos que faltan por facturar."}</p>
     </div>
   );
 }
