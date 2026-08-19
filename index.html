@@ -135,6 +135,27 @@
 
   /* SERVICES */
   .usuaria-list{display:flex; flex-direction:column; gap:8px}
+
+  /* tabla de mujeres / facturación */
+  .mtabla-wrap{overflow:auto; max-height:68vh; border:1px solid var(--line); border-radius:var(--radius)}
+  table.mtabla{border-collapse:separate; border-spacing:0; font-size:13px; min-width:100%}
+  table.mtabla th,table.mtabla td{padding:8px 12px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap}
+  table.mtabla thead th{position:sticky; top:0; background:var(--paper); z-index:2; font-size:11px; letter-spacing:.02em; text-transform:uppercase; color:var(--ink-soft); font-weight:700}
+  table.mtabla th.sortable{cursor:pointer; user-select:none}
+  table.mtabla th.sortable:hover{color:var(--accent)}
+  table.mtabla th.nom,table.mtabla td.nom{position:sticky; left:0; text-align:left; background:var(--card); font-weight:600; box-shadow:1px 0 0 var(--line)}
+  table.mtabla thead th.nom{background:var(--paper); z-index:3}
+  table.mtabla td.nom{z-index:1}
+  table.mtabla tbody tr:hover td{background:#fbfcfb}
+  table.mtabla tbody tr:hover td.nom{background:#fff}
+  .link{color:var(--accent); cursor:pointer; font-weight:600}
+  .link:hover{text-decoration:underline}
+  .cell-done{color:var(--ok); font-weight:700}
+  .cell-part{color:var(--warn); font-weight:600}
+  .cell-none{color:var(--ink-soft)}
+  .svc-toolbar{display:flex; gap:20px; flex-wrap:wrap; align-items:flex-end}
+  .mini-ind{display:flex; gap:20px; flex-wrap:wrap; margin-bottom:14px; font-size:12.5px; color:var(--ink-soft)}
+  .mini-ind .b{font-family:'Spectral'; font-size:18px; font-weight:600; color:var(--ink); margin-left:5px}
   .usuaria-btn{text-align:left; width:100%; border:1px solid var(--line); background:var(--card); border-radius:var(--radius-sm); padding:12px 14px; transition:.1s}
   .usuaria-btn:hover{border-color:var(--line-strong)}
   .usuaria-btn.active{border-color:var(--accent); background:var(--accent-soft)}
@@ -172,6 +193,8 @@
 
   /* DASHBOARD */
   .kpis{display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-bottom:18px}
+  .kpis3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:18px}
+  .warn-banner{background:#FBE3D6; color:#8a4b16; border:1px solid #E8BE9A; border-radius:var(--radius-sm); padding:11px 15px; font-size:13px; font-weight:600; margin-bottom:18px}
   .kpi{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px; box-shadow:var(--shadow)}
   .kpi .label{font-size:11.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft); font-weight:600}
   .kpi .val{font-family:'Spectral'; font-size:29px; font-weight:600; margin-top:7px; line-height:1}
@@ -210,6 +233,7 @@
     .sidebar-cols{grid-template-columns:1fr !important}
     .ficha-grid{grid-template-columns:1fr}
     .kpis{grid-template-columns:1fr 1fr}
+    .kpis3{grid-template-columns:1fr}
     .dash-cols{grid-template-columns:1fr}
   }
   .sidebar-cols{display:grid; grid-template-columns:280px 1fr; gap:24px; align-items:start}
@@ -266,6 +290,54 @@ const uid = () => Math.random().toString(36).slice(2,10);
 const fmtEur = (n) => (Number(n)||0).toLocaleString("es-ES",{style:"currency",currency:"EUR",minimumFractionDigits:0,maximumFractionDigits:2});
 
 /* ───────────────── Exportar a Excel ───────────────── */
+/* ───────────────── Cálculos por usuaria ───────────────── */
+const OBJ = { acogida: svcById("acogida").max, orientacion: svcById("orientacion").max, formacion: svcById("formacion").max };
+function statsUsuaria(u, sesiones){
+  const suyas = sesiones.filter(s=>s.usuaria_id===u.id);
+  const acRe = suyas.filter(s=>s.tipo==="acogida").reduce((a,s)=>a+Number(s.horas||0),0);
+  const orHoras = suyas.filter(s=>s.tipo==="orientacion")
+    .sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).map(s=>Number(s.horas||0));
+  const orRe = orHoras.reduce((a,x)=>a+x,0);
+  const foRe = suyas.filter(s=>s.tipo==="formacion").reduce((a,s)=>a+Number(s.horas||0),0);
+  return {
+    acRe, orHoras, orRe, foRe,
+    acPend: Math.max(0, OBJ.acogida-acRe),
+    orPend: Math.max(0, OBJ.orientacion-orRe),
+    foPend: Math.max(0, OBJ.formacion-foRe),
+  };
+}
+const estadoSvc = (re,max)=> re<=0?"none": re>=max?"done":"part";
+const claseEstado = e => e==="done"?"cell-done":e==="part"?"cell-part":"cell-none";
+
+function hojaMujeres(rows, maxO){
+  return rows.map(({u,acRe,orHoras,orRe,foRe,acPend,orPend,foPend})=>{
+    const r={ "Nombre": u.nombre, "Acogida (h)": acRe };
+    for(let i=0;i<maxO;i++) r["O"+(i+1)] = (orHoras[i]!=null? orHoras[i] : "");
+    r["Total orientación (h)"]=orRe;
+    r["Formación (h)"]=foRe;
+    r["Pend. acogida (h)"]=acPend;
+    r["Pend. orientación (h)"]=orPend;
+    r["Pend. formación (h)"]=foPend;
+    return r;
+  });
+}
+function colsMujeres(maxO){
+  const cols=[{wch:28},{wch:11}];
+  for(let i=0;i<maxO;i++) cols.push({wch:6});
+  cols.push({wch:20},{wch:14},{wch:16},{wch:18},{wch:18});
+  return cols;
+}
+function escribirMujeres(rows, maxO, filename){
+  if(!window.XLSX){ alert("El componente de Excel aún se está cargando. Espera un segundo."); return; }
+  const datos = hojaMujeres(rows, maxO);
+  const ws = XLSX.utils.json_to_sheet(datos.length?datos:[{Nombre:""}]);
+  if(ws['!ref']) ws['!autofilter']={ ref: ws['!ref'] };
+  ws['!cols']=colsMujeres(maxO);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Mujeres");
+  XLSX.writeFile(wb, filename);
+}
+
 function exportarExcel(data){
   if(!window.XLSX){ alert("El componente de Excel aún se está cargando. Espera un segundo y vuelve a intentarlo."); return; }
   const nombreU = id => (data.usuarias.find(u=>u.id===id)||{}).nombre || "—";
@@ -315,8 +387,14 @@ function exportarExcel(data){
   }));
 
   const wb = XLSX.utils.book_new();
+  const filasM = data.usuarias.map(u=>({u, ...statsUsuaria(u, data.sesiones)}));
+  const maxO = Math.max(0, ...filasM.map(r=>r.orHoras.length));
+  const wsM = XLSX.utils.json_to_sheet(hojaMujeres(filasM, maxO).length?hojaMujeres(filasM, maxO):[{Nombre:""}]);
+  if(wsM['!ref']) wsM['!autofilter']={ ref: wsM['!ref'] };
+  wsM['!cols']=colsMujeres(maxO);
+  XLSX.utils.book_append_sheet(wb, wsM, "Mujeres");
   const add = (rows, nombre, vacio) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length?rows:[vacio]), nombre);
-  add(hUsuarias, "Usuarias", {"Usuaria":""});
+  add(hUsuarias, "Ficha usuarias", {"Usuaria":""});
   add(hHoras, "Horas y facturación", {"Usuaria":""});
   add(hBecas, "Becas", {"Usuaria":""});
   add(hCitas, "Citas", {"Trabajadora":""});
@@ -387,9 +465,9 @@ function Main({ session }){
 
   useEffect(()=>{ cargar(); },[]);
 
-  async function cargar(){
-    setLoading(true);
-    if(!SUPA_OK){ setData(datosDemo()); setLoading(false); return; }
+  async function cargar(silent){
+    if(!silent) setLoading(true);
+    if(!SUPA_OK){ setData(datosDemo()); if(!silent) setLoading(false); return; }
     const [u,s,c,a] = await Promise.all([
       supa.from("usuarias").select("*").order("nombre"),
       supa.from("sesiones").select("*").order("fecha",{ascending:false}),
@@ -397,57 +475,57 @@ function Main({ session }){
       supa.from("ayudas").select("*").order("fecha",{ascending:false}),
     ]);
     setData({ usuarias:u.data||[], sesiones:s.data||[], citas:c.data||[], ayudas:a.data||[] });
-    setLoading(false);
+    if(!silent) setLoading(false);
   }
 
   /* mutaciones: en demo solo tocan estado; en real escriben en Supabase y recargan */
   async function addCita(c){
     if(!SUPA_OK){ setData(d=>({...d, citas:[...d.citas,{...c,id:uid()}]})); return; }
-    await supa.from("citas").insert(c); cargar();
+    await supa.from("citas").insert(c); cargar(true);
   }
   async function delCita(id){
     if(!SUPA_OK){ setData(d=>({...d, citas:d.citas.filter(x=>x.id!==id)})); return; }
-    await supa.from("citas").delete().eq("id",id); cargar();
+    await supa.from("citas").delete().eq("id",id); cargar(true);
   }
   async function updCita(id,patch){
     if(!SUPA_OK){ setData(d=>({...d, citas:d.citas.map(x=>x.id===id?{...x,...patch}:x)})); return; }
-    await supa.from("citas").update(patch).eq("id",id); cargar();
+    await supa.from("citas").update(patch).eq("id",id); cargar(true);
   }
   async function addUsuaria(nombre){
     if(!SUPA_OK){ const nu={id:uid(),nombre}; setData(d=>({...d, usuarias:[...d.usuarias,nu]})); return nu.id; }
-    const { data:r } = await supa.from("usuarias").insert({nombre}).select().single(); cargar(); return r?.id;
+    const { data:r } = await supa.from("usuarias").insert({nombre}).select().single(); cargar(true); return r?.id;
   }
   async function addSesion(s){
     if(!SUPA_OK){ setData(d=>({...d, sesiones:[{...s,id:uid()},...d.sesiones]})); return; }
-    await supa.from("sesiones").insert(s); cargar();
+    await supa.from("sesiones").insert(s); cargar(true);
   }
   async function updSesion(id,patch){
     if(!SUPA_OK){ setData(d=>({...d, sesiones:d.sesiones.map(x=>x.id===id?{...x,...patch}:x)})); return; }
-    await supa.from("sesiones").update(patch).eq("id",id); cargar();
+    await supa.from("sesiones").update(patch).eq("id",id); cargar(true);
   }
   async function delSesion(id){
     if(!SUPA_OK){ setData(d=>({...d, sesiones:d.sesiones.filter(x=>x.id!==id)})); return; }
-    await supa.from("sesiones").delete().eq("id",id); cargar();
+    await supa.from("sesiones").delete().eq("id",id); cargar(true);
   }
   async function updUsuaria(id,patch){
     if(!SUPA_OK){ setData(d=>({...d, usuarias:d.usuarias.map(x=>x.id===id?{...x,...patch}:x)})); return; }
-    await supa.from("usuarias").update(patch).eq("id",id); cargar();
+    await supa.from("usuarias").update(patch).eq("id",id); cargar(true);
   }
   async function addAyuda(a){
     if(!SUPA_OK){ setData(d=>({...d, ayudas:[{...a,id:uid()},...d.ayudas]})); return; }
-    await supa.from("ayudas").insert(a); cargar();
+    await supa.from("ayudas").insert(a); cargar(true);
   }
   async function delAyuda(id){
     if(!SUPA_OK){ setData(d=>({...d, ayudas:d.ayudas.filter(x=>x.id!==id)})); return; }
-    await supa.from("ayudas").delete().eq("id",id); cargar();
+    await supa.from("ayudas").delete().eq("id",id); cargar(true);
   }
   async function updAyuda(id,patch){
     if(!SUPA_OK){ setData(d=>({...d, ayudas:d.ayudas.map(x=>x.id===id?{...x,...patch}:x)})); return; }
-    await supa.from("ayudas").update(patch).eq("id",id); cargar();
+    await supa.from("ayudas").update(patch).eq("id",id); cargar(true);
   }
   async function delUsuaria(id){
     if(!SUPA_OK){ setData(d=>({...d, usuarias:d.usuarias.filter(x=>x.id!==id), sesiones:d.sesiones.filter(x=>x.usuaria_id!==id), ayudas:d.ayudas.filter(x=>x.usuaria_id!==id)})); return; }
-    await supa.from("usuarias").delete().eq("id",id); cargar();
+    await supa.from("usuarias").delete().eq("id",id); cargar(true);
   }
 
   return (
@@ -482,7 +560,7 @@ function Main({ session }){
             ? <Resumen data={data} />
             : tab==="calendario"
             ? <Calendario citas={data.citas} onAdd={addCita} onDel={delCita} onUpd={updCita} />
-            : <Servicios data={data} addUsuaria={addUsuaria} addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda} delUsuaria={delUsuaria} />
+            : <Servicios data={data} addUsuaria={addUsuaria} addSesion={addSesion} updSesion={updSesion} delSesion={delSesion} updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda} delUsuaria={delUsuaria} userEmail={session?.user?.email||""} />
         }
       </div>
     </div>
@@ -678,70 +756,70 @@ function ModalCita({ fecha, inicial, onClose, onSave }){
 }
 
 /* ════════════════════════ SERVICIOS ════════════════════════ */
-function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda, updAyuda, delUsuaria }){
+function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuaria, addAyuda, delAyuda, updAyuda, delUsuaria, userEmail }){
   const [sel,setSel]=useState(null);
   const [nuevaU,setNuevaU]=useState("");
-  const [orden,setOrden]=useState("nombre");
   const [busca,setBusca]=useState("");
-  const [pagina,setPagina]=useState(0);
+  const [modo,setModo]=useState("tabla"); // tabla | facturacion
+  const [sortKey,setSortKey]=useState("nombre");
+  const [sortDir,setSortDir]=useState("asc");
   const usuaria=data.usuarias.find(u=>u.id===sel);
-  const PORPAG=10;
-
   const norm = s => (s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
 
   async function eliminarUsuaria(id){ await delUsuaria(id); setSel(null); }
+  async function crearUsuaria(){ const nombre=nuevaU.trim(); if(!nombre) return; const id=await addUsuaria(nombre); setNuevaU(""); if(id) setSel(id); }
 
-  const horasDe = (uid, tipo) => data.sesiones
-    .filter(s=>s.usuaria_id===uid && s.tipo===tipo)
-    .reduce((a,s)=>a+Number(s.horas||0),0);
-
-  const filtradas = [...data.usuarias]
+  const filas = data.usuarias
     .filter(u=>norm(u.nombre).includes(norm(busca)))
-    .sort((a,b)=>{
-      if(orden==="nombre") return (a.nombre||"").localeCompare(b.nombre||"");
-      return horasDe(b.id,orden) - horasDe(a.id,orden);
-    });
+    .map(u=>({u, ...statsUsuaria(u, data.sesiones)}));
+  const val = (r,k)=> k==="nombre" ? (r.u.nombre||"") : r[k];
+  filas.sort((a,b)=>{
+    const x=val(a,sortKey), y=val(b,sortKey);
+    const c = sortKey==="nombre" ? (""+x).localeCompare(""+y) : (x-y);
+    return sortDir==="asc"?c:-c;
+  });
+  const maxO = Math.max(0, ...filas.map(r=>r.orHoras.length));
+  const compAc = filas.filter(r=>r.acRe>=OBJ.acogida).length;
+  const compOr = filas.filter(r=>r.orRe>=OBJ.orientacion).length;
+  const compFo = filas.filter(r=>r.foRe>=OBJ.formacion).length;
 
-  const totalPag = Math.max(1, Math.ceil(filtradas.length/PORPAG));
-  const pag = Math.min(pagina, totalPag-1);
-  const visibles = filtradas.slice(pag*PORPAG, pag*PORPAG+PORPAG);
-
-  async function crearUsuaria(){
-    const nombre=nuevaU.trim(); if(!nombre) return;
-    const id=await addUsuaria(nombre); setNuevaU(""); if(id) setSel(id);
-  }
+  const th = (k,label,titulo)=>(
+    <th className="sortable" title={titulo||label}
+        onClick={()=>{ if(sortKey===k) setSortDir(d=>d==="asc"?"desc":"asc"); else {setSortKey(k); setSortDir(k==="nombre"?"asc":"desc");} }}>
+      {label}{sortKey===k?(sortDir==="asc"?" ▲":" ▼"):""}
+    </th>
+  );
 
   return (
-    <div className="sidebar-cols">
-      {/* barra lateral: buscar, ordenar, añadir */}
-      <div className="card card-pad">
-        <div className="field" style={{marginBottom:16}}>
+    <div>
+      {/* barra de filtros horizontal (arriba) */}
+      <div className="card card-pad svc-toolbar">
+        <div className="field" style={{flex:"2 1 220px"}}>
           <label>🔍 Buscar usuaria</label>
-          <input value={busca} onChange={e=>{setBusca(e.target.value); setPagina(0);}} placeholder="Escribe un nombre…" />
+          <input value={busca} onChange={e=>setBusca(e.target.value)} placeholder="Escribe un nombre…" />
         </div>
-        <div className="field" style={{marginBottom:16}}>
-          <label>Ordenar por</label>
-          <select value={orden} onChange={e=>{setOrden(e.target.value); setPagina(0);}}>
-            <option value="nombre">Nombre (A–Z)</option>
-            <option value="orientacion">Horas de orientación (mayor→menor)</option>
-            <option value="formacion">Horas de formación (mayor→menor)</option>
-            <option value="acogida">Horas de acogida (mayor→menor)</option>
-          </select>
-        </div>
-        <div style={{borderTop:"1px solid var(--line)",paddingTop:16}}>
-          <div className="field">
-            <label>Añadir usuaria</label>
-            <input value={nuevaU} onChange={e=>setNuevaU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&crearUsuaria()} placeholder="iniciales o código" />
+        <div className="field" style={{flex:"3 1 340px"}}>
+          <label>Vista</label>
+          <div className="row" style={{gap:8}}>
+            <button className={"btn btn-sm"+(modo==="tabla"?" btn-primary":"")} onClick={()=>{setModo("tabla"); setSel(null);}}>Tabla de mujeres</button>
+            <button className={"btn btn-sm"+(modo==="sto"?" btn-primary":"")} onClick={()=>{setModo("sto"); setSel(null);}}>Pendientes de subir a STO</button>
+            <button className={"btn btn-sm"+(modo==="facturacion"?" btn-primary":"")} onClick={()=>{setModo("facturacion"); setSel(null);}}>Pendientes de facturar</button>
           </div>
-          <button className="btn btn-primary btn-sm" style={{marginTop:9,width:"100%"}} onClick={crearUsuaria}>+ Añadir</button>
+        </div>
+        <div className="field" style={{flex:"2 1 240px"}}>
+          <label>Añadir usuaria</label>
+          <div className="row" style={{gap:8,flexWrap:"nowrap"}}>
+            <input style={{flex:1,minWidth:0}} value={nuevaU} onChange={e=>setNuevaU(e.target.value)} onKeyDown={e=>e.key==="Enter"&&crearUsuaria()} placeholder="iniciales o código" />
+            <button className="btn btn-primary btn-sm" style={{flex:"none"}} onClick={crearUsuaria}>+ Añadir</button>
+          </div>
         </div>
       </div>
 
-      {/* panel central */}
-      <div>
+      {/* contenido a lo ancho */}
+      <div style={{marginTop:18}}>
         {usuaria
           ? <div>
-              <button className="btn btn-sm" style={{marginBottom:14}} onClick={()=>setSel(null)}>← Volver al listado</button>
+              <button className="btn btn-sm" style={{marginBottom:14}} onClick={()=>setSel(null)}>← Volver</button>
               <DetalleUsuaria usuaria={usuaria}
                 sesiones={data.sesiones.filter(s=>s.usuaria_id===usuaria.id)}
                 ayudas={data.ayudas.filter(a=>a.usuaria_id===usuaria.id)}
@@ -749,30 +827,133 @@ function Servicios({ data, addUsuaria, addSesion, updSesion, delSesion, updUsuar
                 updUsuaria={updUsuaria} addAyuda={addAyuda} delAyuda={delAyuda} updAyuda={updAyuda}
                 onDeleteUsuaria={eliminarUsuaria} />
             </div>
-          : <div className="card card-pad">
-              <div className="spread" style={{marginBottom:12}}>
-                <h3 style={{fontSize:15}}>Usuarias <span className="muted" style={{fontWeight:400}}>({filtradas.length})</span></h3>
-              </div>
-              {filtradas.length===0
-                ? <p className="small muted" style={{padding:"20px 0"}}>{data.usuarias.length===0?"Aún no hay usuarias. Añade la primera en la barra de la izquierda.":"No hay ninguna usuaria que coincida con la búsqueda."}</p>
-                : <div className="usuaria-list">
-                    {visibles.map(u=>(
-                      <button key={u.id} className="usuaria-btn" onClick={()=>setSel(u.id)}>
-                        <span className="nm">{u.nombre}</span>
-                        <div className="tiny muted" style={{marginTop:3}}>
-                          Ac {horasDe(u.id,"acogida")} · Or {horasDe(u.id,"orientacion")} · Fo {horasDe(u.id,"formacion")} h
-                        </div>
-                      </button>
-                    ))}
-                  </div>}
-              {totalPag>1 &&
-                <div className="spread" style={{marginTop:16,borderTop:"1px solid var(--line)",paddingTop:14}}>
-                  <button className="btn btn-sm" disabled={pag===0} onClick={()=>setPagina(pag-1)}>‹ Anterior</button>
-                  <span className="small muted">Página {pag+1} de {totalPag}</span>
-                  <button className="btn btn-sm" disabled={pag>=totalPag-1} onClick={()=>setPagina(pag+1)}>Siguiente ›</button>
-                </div>}
-            </div>}
+          : modo==="facturacion"
+            ? <VistaServicios sesiones={data.sesiones} usuarias={data.usuarias} updSesion={updSesion} busca={busca} norm={norm} userEmail={userEmail} campo="facturacion" />
+          : modo==="sto"
+            ? <VistaServicios sesiones={data.sesiones} usuarias={data.usuarias} updSesion={updSesion} busca={busca} norm={norm} userEmail={userEmail} campo="sto" />
+            : <div className="card card-pad">
+                <div className="spread" style={{marginBottom:12,gap:12}}>
+                  <h3 style={{fontSize:15}}>Usuarias <span className="muted" style={{fontWeight:400}}>({filas.length})</span></h3>
+                  <button className="btn btn-sm" onClick={()=>escribirMujeres(filas, maxO, `mujeres_${hoyStr()}.xlsx`)}>⤓ Exportar tabla</button>
+                </div>
+                <div className="mini-ind">
+                  <div>Completado acogida<span className="b">{compAc}</span></div>
+                  <div>Completado orientación<span className="b">{compOr}</span></div>
+                  <div>Completado formación<span className="b">{compFo}</span></div>
+                </div>
+                {filas.length===0
+                  ? <p className="small muted" style={{padding:"20px 0"}}>{data.usuarias.length===0?"Aún no hay usuarias. Añade la primera en la barra de la izquierda.":"No hay ninguna usuaria que coincida con la búsqueda."}</p>
+                  : <div className="mtabla-wrap">
+                      <table className="mtabla">
+                        <thead>
+                          <tr>
+                            {th("nombre","Nombre")}
+                            {th("acRe","Acogida","Horas de acogida realizadas")}
+                            {Array.from({length:maxO},(_,i)=><th key={"h"+i} title={`Orientación · sesión ${i+1}`} style={{cursor:"default"}}>O{i+1}</th>)}
+                            {th("orRe","Total Or.","Total horas de orientación realizadas")}
+                            {th("foRe","Formación","Horas de formación realizadas")}
+                            {th("acPend","Pend. Ac.","Horas pendientes de acogida")}
+                            {th("orPend","Pend. Or.","Horas pendientes de orientación")}
+                            {th("foPend","Pend. Fo.","Horas pendientes de formación")}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filas.map(r=>(
+                            <tr key={r.u.id}>
+                              <td className="nom"><span className="link" onClick={()=>setSel(r.u.id)}>{r.u.nombre}</span></td>
+                              <td className={claseEstado(estadoSvc(r.acRe,OBJ.acogida))}>{r.acRe}</td>
+                              {Array.from({length:maxO},(_,i)=><td key={"c"+i}>{r.orHoras[i]!=null?r.orHoras[i]:""}</td>)}
+                              <td className={claseEstado(estadoSvc(r.orRe,OBJ.orientacion))}>{r.orRe}</td>
+                              <td className={claseEstado(estadoSvc(r.foRe,OBJ.formacion))}>{r.foRe}</td>
+                              <td className={r.acPend>0?"":"cell-done"}>{r.acPend}</td>
+                              <td className={r.orPend>0?"":"cell-done"}>{r.orPend}</td>
+                              <td className={r.foPend>0?"":"cell-done"}>{r.foPend}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>}
+                <p className="tiny muted" style={{marginTop:10}}>Pulsa un nombre para abrir su ficha · pulsa las cabeceras para ordenar (▲▼) · <span className="cell-done">verde</span> = completado, <span className="cell-part">naranja</span> = en curso.</p>
+              </div>}
       </div>
+    </div>
+  );
+}
+
+function VistaServicios({ sesiones, usuarias, updSesion, busca, norm, userEmail, campo }){
+  const cfg = campo==="sto"
+    ? { boolF:"doc_subida", dateF:"doc_fecha", titulo:"Servicios · subida a STO",
+        lblPend:"Pendientes de subir", lblDone:"Subidos a STO", accion:"Marcar subido a STO",
+        pillDone:d=>`Subido · ${fmtFecha(d)}`, pillPend:"Pendiente de subir",
+        vacioPend:"pendientes de subir a STO", vacioDone:"subidos a STO", extra:{} }
+    : { boolF:"facturado", dateF:"fecha_facturacion", titulo:"Servicios · facturación",
+        lblPend:"Pendientes de facturar", lblDone:"Facturados", accion:"Marcar facturado",
+        pillDone:d=>`Facturado · ${fmtFecha(d)}`, pillPend:"Pendiente",
+        vacioPend:"pendientes de facturar", vacioDone:"facturados", extra:{facturado_por:userEmail||null} };
+
+  const [estado,setEstado]=useState("pendientes"); // pendientes | hechos | todos
+  const nombreU = id => (usuarias.find(u=>u.id===id)||{}).nombre || "—";
+
+  const numMap={}, grupos={};
+  sesiones.slice().sort((a,b)=>(a.fecha||"").localeCompare(b.fecha||"")).forEach(s=>{
+    const k=s.usuaria_id+"|"+s.tipo; grupos[k]=(grupos[k]||0)+1; numMap[s.id]=grupos[k];
+  });
+
+  const hecho = s => !!s[cfg.boolF];
+  let filas = sesiones.map(s=>({...s, _nombre:nombreU(s.usuaria_id), _num:numMap[s.id]}));
+  if(busca) filas=filas.filter(s=>norm(s._nombre).includes(norm(busca)));
+  const nPend = filas.filter(s=>!hecho(s)).length;
+  const nDone = filas.filter(s=>hecho(s)).length;
+  if(estado==="pendientes") filas=filas.filter(s=>!hecho(s));
+  else if(estado==="hechos") filas=filas.filter(s=>hecho(s));
+  filas.sort((a,b)=>(b.fecha||"").localeCompare(a.fecha||""));
+
+  const marcar    = s => updSesion(s.id,{[cfg.boolF]:true,  [cfg.dateF]:hoyStr(), ...cfg.extra});
+  const desmarcar = s => updSesion(s.id,{[cfg.boolF]:false, [cfg.dateF]:null, ...(campo==="facturacion"?{facturado_por:null}:{})});
+
+  return (
+    <div className="card card-pad">
+      <div className="spread" style={{marginBottom:14,gap:12}}>
+        <h3 style={{fontSize:15}}>{cfg.titulo}</h3>
+        <div className="row" style={{gap:6}}>
+          <button className={"btn btn-sm"+(estado==="pendientes"?" btn-primary":"")} onClick={()=>setEstado("pendientes")}>{cfg.lblPend} ({nPend})</button>
+          <button className={"btn btn-sm"+(estado==="hechos"?" btn-primary":"")} onClick={()=>setEstado("hechos")}>{cfg.lblDone} ({nDone})</button>
+          <button className={"btn btn-sm"+(estado==="todos"?" btn-primary":"")} onClick={()=>setEstado("todos")}>Todos</button>
+        </div>
+      </div>
+      {filas.length===0
+        ? <p className="small muted" style={{padding:"18px 0"}}>No hay servicios {estado==="pendientes"?cfg.vacioPend:estado==="hechos"?cfg.vacioDone:"registrados"}.</p>
+        : <div className="mtabla-wrap">
+            <table className="mtabla">
+              <thead><tr>
+                <th className="nom" style={{cursor:"default"}}>Usuaria</th>
+                <th style={{cursor:"default",textAlign:"left"}}>Servicio</th>
+                <th style={{cursor:"default"}}>Fecha</th>
+                <th style={{cursor:"default"}}>Nº</th>
+                <th style={{cursor:"default"}}>Horas</th>
+                <th style={{cursor:"default",textAlign:"left"}}>Estado</th>
+                <th style={{cursor:"default",textAlign:"left"}}>Acción</th>
+              </tr></thead>
+              <tbody>
+                {filas.map(s=>(
+                  <tr key={s.id}>
+                    <td className="nom">{s._nombre}</td>
+                    <td style={{textAlign:"left"}}>{svcById(s.tipo).label}</td>
+                    <td>{fmtFecha(s.fecha)}</td>
+                    <td>{s.tipo==="orientacion"?s._num:"—"}</td>
+                    <td><b>{s.horas} h</b></td>
+                    <td style={{textAlign:"left"}}>{hecho(s)
+                      ? <span className="pill pill-yes">{cfg.pillDone(s[cfg.dateF])}</span>
+                      : <span className="pill pill-no">{cfg.pillPend}</span>}</td>
+                    <td style={{textAlign:"left"}}>{hecho(s)
+                      ? <button className="btn btn-sm btn-ghost" onClick={()=>desmarcar(s)}>Desmarcar</button>
+                      : <button className="btn btn-sm btn-primary" onClick={()=>marcar(s)}>{cfg.accion}</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>}
+      <p className="tiny muted" style={{marginTop:10}}>Al marcar, el servicio sale de "{cfg.lblPend}" y el cambio se guarda en la base de datos (se mantiene al recargar).</p>
     </div>
   );
 }
@@ -1100,20 +1281,41 @@ function ModalAyuda({ beca, usuaria_id, inicial, onClose, onSave }){
 
 /* ════════════════════════ RESUMEN / CUADRO DE MANDO ════════════════════════ */
 function Resumen({ data }){
-  const { sesiones, usuarias } = data;
+  const { sesiones, usuarias, ayudas } = data;
   const [ver,setVer]=useState({fac:true,pen:true});
+  const AZUL="#2F6FB2";
 
-  const importe = s => Number(s.horas||0)*Number(s.tarifa||0);
+  const impS = s => Number(s.horas||0)*Number(s.tarifa||0);
+  const impA = a => Number(a.importe||0);
   const totalHoras = sesiones.reduce((a,s)=>a+Number(s.horas||0),0);
-  const eurFacturado = sesiones.filter(s=>s.facturado).reduce((a,s)=>a+importe(s),0);
-  const eurPendiente = sesiones.filter(s=>!s.facturado).reduce((a,s)=>a+importe(s),0);
 
-  // Mujeres acogidas = todas las dadas de alta (al alta ya han hecho su acogida mínima)
+  // Lista unificada de servicios realizados (sesiones + becas) con su estado económico único
+  const servicios = [
+    ...sesiones.map(s=>({ tipo:s.tipo, importe:impS(s), facturado:!!s.facturado, doc:!!s.doc_subida, sinValor: Number(s.horas||0)>0 && !(Number(s.tarifa)>0), fecha_fac:s.fecha_facturacion })),
+    ...ayudas.map(a=>({ tipo:a.tipo, importe:impA(a), facturado:!!a.facturado, doc:!!a.doc_subida, sinValor: !(Number(a.importe)>0), fecha_fac:a.fecha_facturacion })),
+  ];
+  const sum = pred => servicios.filter(pred).reduce((a,x)=>a+x.importe,0);
+  const cnt = pred => servicios.filter(pred).length;
+  const esFac = x=>x.facturado, esSubir = x=>!x.facturado && !x.doc, esFacturar = x=>!x.facturado && x.doc;
+  const eFac=sum(esFac), ePorSubir=sum(esSubir), ePorFacturar=sum(esFacturar);
+  const eTotal = eFac + ePorSubir + ePorFacturar;
+  const nFac=cnt(esFac), nSubir=cnt(esSubir), nFacturar=cnt(esFacturar);
+  const sinValorar = cnt(x=>x.sinValor);
+
+  // Desglose económico por tipo de servicio (acogida, orientación, formación, conciliación, transporte)
+  const TIPOS = [...SERVICIOS.map(s=>({id:s.id,label:s.label})), ...BECAS.map(b=>({id:b.id,label:b.label}))];
+  const ecoTipo = TIPOS.map(t=>{
+    const dentro = x=>x.tipo===t.id;
+    const fac=sum(x=>dentro(x)&&esFac(x)), sub=sum(x=>dentro(x)&&esSubir(x)), facturar=sum(x=>dentro(x)&&esFacturar(x));
+    return {t, fac, sub, facturar, total:fac+sub+facturar};
+  });
+
+  // Mujeres acogidas = todas las dadas de alta; atendida = mínimos 3/10/20
   const acogidas = usuarias.length;
-  // Mujer atendida = ha alcanzado los mínimos: 3h acogida + 10h orientación + 20h formación
   const horasUS = (uid, tipo) => sesiones.filter(s=>s.usuaria_id===uid && s.tipo===tipo).reduce((a,s)=>a+Number(s.horas||0),0);
   const atendidas = usuarias.filter(u => horasUS(u.id,"acogida")>=3 && horasUS(u.id,"orientacion")>=10 && horasUS(u.id,"formacion")>=20).length;
 
+  // Gráfico de horas por servicio (complementario)
   const porServicio = SERVICIOS.map(svc=>{
     const ss=sesiones.filter(s=>s.tipo===svc.id);
     const fac=ss.filter(s=>s.facturado).reduce((a,s)=>a+Number(s.horas||0),0);
@@ -1127,10 +1329,11 @@ function Resumen({ data }){
   }));
   const maxTrab = Math.max(1, ...porTrab.map(p=>p.h));
 
+  // Facturación por mes (sesiones + becas facturadas), misma fuente de cálculo
   const mesMap={};
-  sesiones.filter(s=>s.facturado && s.fecha_facturacion).forEach(s=>{
-    const k=s.fecha_facturacion.slice(0,7);
-    mesMap[k]=(mesMap[k]||0)+importe(s);
+  servicios.filter(x=>x.facturado && x.fecha_fac).forEach(x=>{
+    const k=x.fecha_fac.slice(0,7);
+    mesMap[k]=(mesMap[k]||0)+x.importe;
   });
   const meses=Object.keys(mesMap).sort();
   const maxMes=Math.max(1, ...meses.map(k=>mesMap[k]));
@@ -1139,17 +1342,58 @@ function Resumen({ data }){
 
   return (
     <div>
-      <div className="kpis">
+      <div className="kpis3">
+        <div className="kpi"><div className="label">€ Facturado</div><div className="val" style={{color:"var(--ok)"}}>{fmtEur(eFac)}</div><div className="sub">{nFac} servicios</div><div className="accent-bar" style={{background:"var(--ok)"}}></div></div>
+        <div className="kpi" title="Documentación todavía pendiente por parte del equipo"><div className="label">€ Pendiente de subir a STO</div><div className="val" style={{color:"var(--warn)"}}>{fmtEur(ePorSubir)}</div><div className="sub">{nSubir} servicios · depende del equipo</div><div className="accent-bar" style={{background:"var(--warn)"}}></div></div>
+        <div className="kpi" title="Documentación ya subida y pendiente de validación de STO"><div className="label">€ Pendiente de facturar por STO</div><div className="val" style={{color:AZUL}}>{fmtEur(ePorFacturar)}</div><div className="sub">{nFacturar} servicios · depende de STO</div><div className="accent-bar" style={{background:AZUL}}></div></div>
+      </div>
+
+      {sinValorar>0 &&
+        <div className="warn-banner">⚠ {sinValorar} servicio{sinValorar>1?"s":""} realizado{sinValorar>1?"s":""} sin tarifa o importe asignado: cuenta{sinValorar>1?"n":""} como 0 €. Revísalo{sinValorar>1?"s":""} para que el total económico sea correcto.</div>}
+
+      <div className="kpis3" style={{marginBottom:22}}>
         <div className="kpi"><div className="label">Mujeres acogidas</div><div className="val">{acogidas}</div><div className="sub">Todas las dadas de alta</div><div className="accent-bar" style={{background:"var(--accent)"}}></div></div>
         <div className="kpi"><div className="label">Mujeres atendidas</div><div className="val">{atendidas}</div><div className="sub">≥3h acogida · ≥10h orientación · ≥20h formación</div><div className="accent-bar" style={{background:"var(--c-gema)"}}></div></div>
         <div className="kpi"><div className="label">Horas totales</div><div className="val">{totalHoras} h</div><div className="accent-bar" style={{background:"var(--c-vic)"}}></div></div>
-        <div className="kpi"><div className="label">€ facturado</div><div className="val" style={{color:"var(--ok)"}}>{fmtEur(eurFacturado)}</div><div className="accent-bar" style={{background:"var(--ok)"}}></div></div>
-        <div className="kpi"><div className="label">€ pendiente</div><div className="val" style={{color:"var(--warn)"}}>{fmtEur(eurPendiente)}</div><div className="accent-bar" style={{background:"var(--warn)"}}></div></div>
+      </div>
+
+      <div className="chart-card">
+        <h3>Desglose económico por servicio</h3>
+        <p className="small muted">Importe según su estado. Total realizado = facturado + pendiente de subir + pendiente de facturar.</p>
+        <div className="mtabla-wrap" style={{maxHeight:"none",marginTop:12}}>
+          <table className="mtabla">
+            <thead><tr>
+              <th className="nom" style={{cursor:"default"}}>Servicio</th>
+              <th style={{cursor:"default"}}>Facturado</th>
+              <th style={{cursor:"default"}} title="Documentación pendiente por parte del equipo">Pend. subir STO</th>
+              <th style={{cursor:"default"}} title="Documentación subida, pendiente de validación de STO">Pend. facturar STO</th>
+              <th style={{cursor:"default"}}>Total realizado</th>
+            </tr></thead>
+            <tbody>
+              {ecoTipo.map(r=>(
+                <tr key={r.t.id}>
+                  <td className="nom">{r.t.label}</td>
+                  <td style={{color:"var(--ok)"}}>{fmtEur(r.fac)}</td>
+                  <td style={{color:"var(--warn)"}}>{fmtEur(r.sub)}</td>
+                  <td style={{color:AZUL}}>{fmtEur(r.facturar)}</td>
+                  <td><b>{fmtEur(r.total)}</b></td>
+                </tr>
+              ))}
+              <tr style={{borderTop:"2px solid var(--line-strong)"}}>
+                <td className="nom"><b>Total</b></td>
+                <td style={{color:"var(--ok)"}}><b>{fmtEur(eFac)}</b></td>
+                <td style={{color:"var(--warn)"}}><b>{fmtEur(ePorSubir)}</b></td>
+                <td style={{color:AZUL}}><b>{fmtEur(ePorFacturar)}</b></td>
+                <td><b>{fmtEur(eTotal)}</b></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="chart-card">
         <h3>Horas por servicio</h3>
-        <p className="small muted">Reparto entre horas ya facturadas y pendientes. Pulsa la leyenda para filtrar.</p>
+        <p className="small muted">Información operativa complementaria (horas, no importes). Pulsa la leyenda para filtrar.</p>
         <div style={{marginTop:14}}>
           {porServicio.map(({svc,fac,pen,total})=>(
             <div className="hbar-row" key={svc.id}>
