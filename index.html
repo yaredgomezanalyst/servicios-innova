@@ -465,16 +465,29 @@ function Main({ session }){
 
   useEffect(()=>{ cargar(); },[]);
 
+  // Trae TODAS las filas de una tabla en bloques de 1000 (Supabase devuelve máx. 1000 por consulta)
+  async function traerTodo(tabla, col, asc){
+    const TAM=1000; let desde=0, todo=[];
+    while(true){
+      const { data, error } = await supa.from(tabla).select("*").order(col,{ascending:asc}).range(desde, desde+TAM-1);
+      if(error || !data || data.length===0) break;
+      todo = todo.concat(data);
+      if(data.length < TAM) break; // última página
+      desde += TAM;
+    }
+    return todo;
+  }
+
   async function cargar(silent){
     if(!silent) setLoading(true);
     if(!SUPA_OK){ setData(datosDemo()); if(!silent) setLoading(false); return; }
     const [u,s,c,a] = await Promise.all([
-      supa.from("usuarias").select("*").order("nombre"),
-      supa.from("sesiones").select("*").order("fecha",{ascending:false}),
-      supa.from("citas").select("*").order("fecha"),
-      supa.from("ayudas").select("*").order("fecha",{ascending:false}),
+      traerTodo("usuarias","nombre",true),
+      traerTodo("sesiones","fecha",false),
+      traerTodo("citas","fecha",true),
+      traerTodo("ayudas","fecha",false),
     ]);
-    setData({ usuarias:u.data||[], sesiones:s.data||[], citas:c.data||[], ayudas:a.data||[] });
+    setData({ usuarias:u, sesiones:s, citas:c, ayudas:a });
     if(!silent) setLoading(false);
   }
 
